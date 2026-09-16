@@ -42,6 +42,7 @@ const el = (tag, props = {}, children = []) => {
     if (k === 'class') n.className = v;
     else if (k === 'text') n.textContent = v;
     else if (k === 'html') n.innerHTML = v;
+    else if (k === 'value') n.value = v;
     else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
     else if (v !== null && v !== false && v !== undefined) n.setAttribute(k, v);
   }
@@ -50,22 +51,21 @@ const el = (tag, props = {}, children = []) => {
 };
 
 // Textareas that grow with their content instead of scrolling.
+const fit = (ta) => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+
 const autosize = (ta) => {
-  const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
-  ta.addEventListener('input', fit);
-  requestAnimationFrame(fit);
+  ta.addEventListener('input', () => fit(ta));
+  requestAnimationFrame(() => fit(ta));
   return ta;
 };
 
-const field = (value, placeholder, oninput, cls = 'field') => {
-  const ta = el('textarea', { class: cls, rows: 1, placeholder, oninput: (e) => oninput(e.target.value) });
-  ta.value = value || '';
-  return autosize(ta);
-};
+const field = (value, placeholder, oninput, cls = 'field') => autosize(
+  el('textarea', { class: cls, rows: 1, placeholder, value: value || '', oninput: (e) => oninput(e.target.value) })
+);
 
 /* ------------------------------------------------------------------ state */
 
-const blankBoard = (name = 'Board') => ({
+const blankBoard = (name) => ({
   id: uid(),
   name,
   layout: 'grid',
@@ -339,15 +339,12 @@ function renderCard(card) {
 
     const head = el('div', { class: 'card-head' }, [
       el('span', { class: 'card-grip', title: 'Drag', text: '⁙' }),
-      (() => {
-        const t = el('input', {
-          class: 'card-title',
-          placeholder: TYPES[card.type].label,
-          oninput: (e) => { card.title = e.target.value; save(); },
-        });
-        t.value = card.title || '';
-        return t;
-      })(),
+      el('input', {
+        class: 'card-title',
+        placeholder: TYPES[card.type].label,
+        value: card.title || '',
+        oninput: (e) => { card.title = e.target.value; save(); },
+      }),
       el('button', {
         class: 'icon-btn sm card-menu-btn', text: '⋯', title: 'Options',
         onclick: (e) => { e.stopPropagation(); openCardMenu(card, e.currentTarget); },
@@ -365,7 +362,7 @@ function renderCard(card) {
       node.append(handle);
     }
 
-    if (focusIndex !== undefined && typeof focusIndex === 'number') {
+    if (typeof focusIndex === 'number') {
       const inputs = body.querySelectorAll('.list-row .field');
       if (inputs[focusIndex]) inputs[focusIndex].focus();
     }
@@ -410,7 +407,14 @@ function openCardMenu(card, anchor) {
   }
 
   menu.append(el('button', {
-    onclick: () => { duplicateCard(card); },
+    onclick: () => {
+      const b = board();
+      const copy = { ...structuredClone(card), id: uid(), order: b.cards.length };
+      copy.x = (card.x || 40) + 24;
+      copy.y = (card.y || 40) + 24;
+      b.cards.push(copy);
+      save(); render();
+    },
   }, [el('span', { class: 'glyph', text: '⧉' }), el('span', { text: 'Duplicate' })]));
 
   menu.append(el('button', {
@@ -428,24 +432,11 @@ function openCardMenu(card, anchor) {
   openMenu = menu;
 }
 
-function duplicateCard(card) {
-  const b = board();
-  const copy = JSON.parse(JSON.stringify(card));
-  copy.id = uid();
-  copy.x = (card.x || 40) + 24;
-  copy.y = (card.y || 40) + 24;
-  copy.order = b.cards.length;
-  b.cards.push(copy);
-  save(); render();
-}
-
 /* ------------------------------------------------------------ drag & drop */
 
 let dragCard = null;
 
 function attachDrag(node, card) {
-  const grip = node.querySelector('.card-grip');
-
   // Canvas mode: free positioning via pointer events.
   node.addEventListener('pointerdown', (e) => {
     if (board().layout !== 'canvas') return;
@@ -456,8 +447,11 @@ function attachDrag(node, card) {
     node.style.zIndex = 50;
 
     const move = (ev) => {
-      card.x = Math.max(0, origX + (ev.clientX - startX));
-      card.y = Math.max(0, origY + (ev.clientY - startY));
+      // The plane is scaled, so a pointer that travelled 100 screen px has
+      // travelled 100/zoom plane px. Without this the card lags the cursor.
+      const z = zoomFactor();
+      card.x = Math.max(0, origX + (ev.clientX - startX) / z);
+      card.y = Math.max(0, origY + (ev.clientY - startY) / z);
       node.style.left = card.x + 'px';
       node.style.top = card.y + 'px';
     };
@@ -466,17 +460,17 @@ function attachDrag(node, card) {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       save();
+      // A card dragged past the edge grows the plane, or re-fits the view.
+      applyZoom();
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
 
   // Grid + columns: HTML5 drag and drop for reordering / moving between columns.
-  if (grip) {
-    grip.addEventListener('mousedown', () => {
-      if (board().layout !== 'canvas') node.draggable = true;
-    });
-  }
+  node.querySelector('.card-grip').addEventListener('mousedown', () => {
+    if (board().layout !== 'canvas') node.draggable = true;
+  });
   node.addEventListener('dragstart', (e) => {
     dragCard = card;
     node.classList.add('dragging');
@@ -525,7 +519,8 @@ function startResize(e, card, node) {
   const startX = e.clientX;
   const origW = node.offsetWidth;
   const move = (ev) => {
-    card.w = Math.max(180, origW + (ev.clientX - startX));
+    // offsetWidth is the pre-transform width, so only the delta needs scaling.
+    card.w = Math.max(180, origW + (ev.clientX - startX) / zoomFactor());
     node.style.width = card.w + 'px';
   };
   const up = () => {
@@ -556,7 +551,7 @@ function render() {
   renderEmpty();
 
   if (b.layout === 'canvas') {
-    const plane = el('div', { class: 'canvas-plane' });
+    const plane = el('div', { class: 'canvas-plane zoom-plane' });
     sorted.forEach((card) => {
       const node = renderCard(card);
       node.style.left = (card.x ?? 40) + 'px';
@@ -567,7 +562,9 @@ function render() {
     boardEl.append(plane);
 
   } else if (b.layout === 'grid') {
-    sorted.forEach((card) => boardEl.append(renderCard(card)));
+    const plane = el('div', { class: 'grid-plane zoom-plane' });
+    sorted.forEach((card) => plane.append(renderCard(card)));
+    boardEl.append(plane);
 
   } else {
     // columns
@@ -595,9 +592,11 @@ function render() {
         save(); render();
       });
 
-      const title = el('input', { class: 'column-title' });
-      title.value = col.name;
-      title.addEventListener('input', () => { col.name = title.value; save(); });
+      const title = el('input', {
+        class: 'column-title',
+        value: col.name,
+        oninput: () => { col.name = title.value; save(); },
+      });
 
       const head = el('div', { class: 'column-head' }, [
         title,
@@ -624,9 +623,33 @@ function render() {
   }
 
   renderTabs();
+  syncModeButtons();
+  applyZoom();
+}
+
+/* Calendar is a view alongside the three card layouts, but it is not a board
+   layout — it lives on state, so switching to it and back leaves the board's
+   own arrangement exactly as it was. */
+function syncModeButtons() {
+  const current = state.calendarOpen ? 'calendar' : board().layout;
   document.querySelectorAll('#layoutToggle button').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.layout === b.layout);
+    btn.classList.toggle('active', btn.dataset.layout === current);
   });
+}
+
+function setMode(mode) {
+  if (mode === 'calendar') {
+    if (!state.calendarOpen) calView = new Date();
+    state.calendarOpen = true;
+  } else {
+    state.calendarOpen = false;
+    board().layout = mode;
+  }
+  save();
+  // calPaint first: it un-hides the board, and applyZoom inside render()
+  // cannot measure a hidden element.
+  calPaint();
+  render();
 }
 
 function renderTabs() {
@@ -703,13 +726,155 @@ addBtn.addEventListener('click', (e) => {
 });
 document.addEventListener('click', () => { addMenu.hidden = true; });
 
+/* ------------------------------------------------------------------ zoom */
+
+/* Canvas and grid are scaled to fit instead of scrolled, so a whole board is
+   on screen at once and neither view needs a scrollbar.
+
+   b.zoom === null means "work the scale out for me": it is the default, and
+   it recomputes on every render and every window resize. Pressing + or -
+   pins an explicit scale, and the percentage button lets go of it again. */
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 2;
+const ZOOM_STEPS = [ZOOM_MIN, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 1.75, ZOOM_MAX];
+// Searched high to low, so a fit is the largest scale that still fits. A fit
+// never enlarges, so the steps above 100% are not candidates.
+const FIT_STEPS = ZOOM_STEPS.filter((s) => s <= 1).reverse();
+
+const zoomCtl = document.getElementById('zoomCtl');
+const zoomLevelBtn = document.getElementById('zoomLevel');
+
+const zoomable = () => !state.calendarOpen && board().layout !== 'columns';
+const zoomFactor = () => parseFloat(boardEl.style.getPropertyValue('--zoom')) || 1;
+const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+// The board's content box. The plane is laid out at this size divided by the
+// scale, so that once scaled it lands exactly on the visible area.
+function boardBox() {
+  const cs = getComputedStyle(boardEl);
+  return {
+    w: boardEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+    h: boardEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+  };
+}
+
+function setPlane(plane, z, box, minW = 0, minH = 0) {
+  boardEl.style.setProperty('--zoom', z);
+  plane.style.width = Math.max(minW, box.w / z) + 'px';
+  plane.style.height = Math.max(minH, box.h / z) + 'px';
+}
+
+/* autosize() grows the card textareas on a requestAnimationFrame, so at the
+   moment render() finishes they are all still one row tall. Measuring then
+   under-reads the content by a wide margin and the fit comes back far too
+   confident. Force the heights now, synchronously, before measuring.
+
+   This has to run per candidate scale in the grid, not once: zooming out
+   makes more, narrower columns, and a narrower card wraps to a taller one. */
+const settleHeights = (plane) => plane.querySelectorAll('textarea').forEach((ta) => fit(ta));
+
+// Absolutely positioned cards do not reflow when scaled, so the canvas fit is
+// closed-form: measure the furthest edges once and divide.
+function canvasExtent(plane) {
+  let right = 0, bottom = 0;
+  plane.querySelectorAll('.card').forEach((n) => {
+    right = Math.max(right, n.offsetLeft + n.offsetWidth);
+    bottom = Math.max(bottom, n.offsetTop + n.offsetHeight);
+  });
+  return { right, bottom };
+}
+
+function applyZoom() {
+  zoomCtl.hidden = !zoomable();
+  const plane = boardEl.querySelector('.zoom-plane');
+  if (!plane || !zoomable()) return;
+
+  const b = board();
+  const box = boardBox();
+  if (box.w <= 0 || box.h <= 0) return;  // measured while hidden — nothing to do
+
+  let z;
+  if (b.layout === 'canvas') {
+    const pad = 32;
+    settleHeights(plane);
+    const ext = canvasExtent(plane);
+    z = b.zoom || (ext.right && ext.bottom
+      ? clampZoom(Math.min(1, box.w / (ext.right + pad), box.h / (ext.bottom + pad)))
+      : 1);
+    // Never smaller than a screenful, so there is always somewhere to drag to.
+    setPlane(plane, z, box, ext.right + pad, ext.bottom + pad);
+
+  } else if (b.zoom) {
+    setPlane(plane, b.zoom, box);
+    z = b.zoom;
+
+  } else {
+    // Multicol reflows at every scale — zooming out buys more columns, not
+    // just smaller cards — so the fit has to be measured rather than solved.
+    z = ZOOM_MIN;
+    for (const step of FIT_STEPS) {
+      setPlane(plane, step, box);
+      settleHeights(plane);
+      if (plane.scrollWidth <= plane.clientWidth + 1) { z = step; break; }
+    }
+  }
+
+  // Auto-fit guarantees the content fits, so there is nothing to scroll. A
+  // pinned scale can overflow, and then the view has to be reachable — by
+  // wheel and trackpad, still without a scrollbar drawn across the board.
+  boardEl.classList.toggle('pannable', !!b.zoom);
+
+  zoomLevelBtn.textContent = Math.round(z * 100) + '%';
+  zoomLevelBtn.classList.toggle('auto', !b.zoom);
+}
+
+function nudgeZoom(dir) {
+  const current = zoomFactor();
+  const next = dir > 0
+    ? ZOOM_STEPS.find((s) => s > current + 0.001)
+    : [...ZOOM_STEPS].reverse().find((s) => s < current - 0.001);
+  // ZOOM_STEPS is already bounded by ZOOM_MIN/ZOOM_MAX, so no clamp is needed.
+  board().zoom = next ?? current;
+  save(); applyZoom();
+}
+
+function resetZoom() {
+  board().zoom = null;
+  save(); applyZoom();
+}
+
+document.getElementById('zoomIn').addEventListener('click', () => nudgeZoom(1));
+document.getElementById('zoomOut').addEventListener('click', () => nudgeZoom(-1));
+zoomLevelBtn.addEventListener('click', resetZoom);
+
+// Ctrl/Cmd + wheel, the gesture every other canvas app already uses.
+boardEl.addEventListener('wheel', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !zoomable()) return;
+  e.preventDefault();
+  nudgeZoom(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !zoomable()) return;
+  if (e.key === '=' || e.key === '+') { e.preventDefault(); nudgeZoom(1); }
+  else if (e.key === '-') { e.preventDefault(); nudgeZoom(-1); }
+  else if (e.key === '0') { e.preventDefault(); resetZoom(); }
+});
+
+// An auto-fitted board has to re-fit when the window changes shape.
+let fitTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(applyZoom, 120);
+});
+
 /* ------------------------------------------------------------ topbar wiring */
 
 document.getElementById('layoutToggle').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
-  board().layout = btn.dataset.layout;
-  save(); render();
+  setMode(btn.dataset.layout);
 });
 
 document.getElementById('addBoardBtn').addEventListener('click', () => {
@@ -719,8 +884,14 @@ document.getElementById('addBoardBtn').addEventListener('click', () => {
   save(); render();
 });
 
+/* The theme is the app's own toggle, not the OS's, so the browser chrome
+   cannot follow a prefers-color-scheme media query on the <meta> tag — this
+   is the one place the theme changes, so it sets the tag too. */
+const THEME_COLOR = { light: '#ffffff', dark: '#191919' };
+
 const applyTheme = () => {
   document.documentElement.dataset.theme = state.theme;
+  document.querySelector('meta[name="theme-color"]').content = THEME_COLOR[state.theme];
   document.getElementById('themeBtn').innerHTML = state.theme === 'dark' ? '&#9788;' : '&#9789;';
 };
 document.getElementById('themeBtn').addEventListener('click', () => {
@@ -926,8 +1097,8 @@ function editText(key, cellNode) {
     class: 'cal-text-input',
     type: 'text',
     placeholder: 'Add a note...',
+    value: entry.text || '',
   });
-  inp.value = entry.text || '';
 
   const overflow = () => {
     inp.classList.add('at-limit');
@@ -1023,7 +1194,6 @@ function calPaint() {
   const open = !!state.calendarOpen;
   calEl.hidden = !open;
   boardEl.hidden = open;
-  document.getElementById('calendarBtn').classList.toggle('active', open);
   if (!open) { renderEmpty(); return; }
 
   // The board's empty prompt has no business showing behind the calendar.
@@ -1064,11 +1234,7 @@ const calGo = (delta) => {
   calPaint();
 };
 
-document.getElementById('calendarBtn').addEventListener('click', () => {
-  state.calendarOpen = !state.calendarOpen;
-  if (state.calendarOpen) calView = new Date();
-  calPaint(); save();
-});
+
 document.getElementById('calPrev').addEventListener('click', () => calGo(-1));
 document.getElementById('calNext').addEventListener('click', () => calGo(1));
 document.getElementById('calToday').addEventListener('click', () => {
@@ -1076,13 +1242,11 @@ document.getElementById('calToday').addEventListener('click', () => {
   calPaint();
 });
 document.getElementById('calClose').addEventListener('click', () => {
-  state.calendarOpen = false;
-  calPaint(); save();
+  setMode(board().layout);
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.calendarOpen) {
-    state.calendarOpen = false;
-    calPaint(); save();
+    setMode(board().layout);
   }
 });
 
@@ -1097,5 +1261,18 @@ state.calendarDays ||= {};
 
 applyTheme();
 pomoPaint();
-render();
 calPaint();
+render();
+
+/* Manifest shortcuts land here as query params (see manifest.webmanifest).
+   The URL is scrubbed once handled, so a reload of an installed window does
+   not silently add a second card. */
+{
+  const params = new URLSearchParams(location.search);
+  const wanted = params.get('new');
+  const view = params.get('view');
+
+  if (wanted && TYPES[wanted]) addCard(wanted);
+  if (view === 'calendar') setMode('calendar');
+  if (wanted || view) history.replaceState(null, '', location.pathname);
+}

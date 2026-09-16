@@ -1,16 +1,115 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<!-- viewport-fit lets the layout reach under the iOS notch; see safe-area insets in base.css -->
+<!-- viewport-fit lets the layout reach under the iOS notch; the safe-area
+     insets that keep content out from under it are in style.css -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Boards, cards and a picture calendar. Works offline.">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#191919" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Boards, cards and a picture calendar. Everything stays on your device and works offline.">
 <title>Notes</title>
+
+<!-- installable app -->
+<link rel="manifest" href="manifest.webmanifest">
+<!-- One tag, not a light/dark pair: the theme is the app's own toggle, so
+     pwa.js rewrites this rather than a media query doing it. -->
+<meta name="theme-color" content="#ffffff">
+
+<!-- icons: Safari reads apple-touch-icon from here, never from the manifest -->
+<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<!-- iOS standalone chrome -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Notes">
+
+<link rel="stylesheet" href="style.css">
+
+<!-- Theme before first paint. app.js runs at the end of the body, so without
+     this a dark-theme user gets a white flash on every launch. -->
+<script>
+try {
+  var s = JSON.parse(localStorage.getItem('notes.dashboard.v1'));
+  if (s && s.theme) document.documentElement.dataset.theme = s.theme;
+} catch (e) {}
+</script>
 </head>
 <body>
-<div id="root"></div>
-<script type="module" src="/src/main.tsx"></script>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="wordmark">Notes</span>
+    <div class="board-tabs" id="boardTabs"></div>
+    <button class="icon-btn" id="addBoardBtn" title="New board">+</button>
+  </div>
+
+  <div class="topbar-right">
+    <div class="segmented" id="layoutToggle" role="tablist" aria-label="Layout">
+      <button data-layout="canvas"  role="tab" title="Free canvas">Canvas</button>
+      <button data-layout="grid"    role="tab" title="Masonry grid">Grid</button>
+      <button data-layout="columns" role="tab" title="Columns">Columns</button>
+      <button data-layout="calendar" role="tab" title="Picture calendar">Calendar</button>
+    </div>
+
+    <div class="zoom" id="zoomCtl" hidden>
+      <button class="icon-btn sm" id="zoomOut" title="Zoom out (Ctrl -)">&minus;</button>
+      <button class="zoom-level" id="zoomLevel" title="Fit to screen (Ctrl 0)">100%</button>
+      <button class="icon-btn sm" id="zoomIn" title="Zoom in (Ctrl +)">+</button>
+    </div>
+
+    <div class="menu-wrap">
+      <button class="btn primary" id="addCardBtn">New</button>
+      <div class="menu" id="addCardMenu" hidden></div>
+    </div>
+
+    <button class="icon-btn" id="pomodoroBtn" title="Pomodoro timer">&#9201;</button>
+    <button class="icon-btn" id="themeBtn" title="Toggle theme">&#9789;</button>
+  </div>
+</header>
+
+<main id="board" class="board"></main>
+
+<!-- Calendar view: fills the canvas area, replacing the board while open -->
+<section class="calendar-view" id="calendarView" hidden>
+  <div class="cal-bar">
+    <button class="icon-btn" id="calPrev" title="Previous month">&#8249;</button>
+    <h2 class="cal-month" id="calMonth"></h2>
+    <button class="icon-btn" id="calNext" title="Next month">&#8250;</button>
+    <button class="btn" id="calToday">Today</button>
+    <span class="cal-spacer"></span>
+    <button class="icon-btn" id="calClose" title="Back to board">&times;</button>
+  </div>
+  <div class="cal-grid" id="calGrid"></div>
+  <div class="cal-warn" id="calWarn" hidden></div>
+</section>
+
+<div class="empty-state" id="emptyState" hidden>
+  <p>Nothing here yet.</p>
+  <p class="muted">Hit <strong>New</strong> to add your first card.</p>
+</div>
+
+<!-- Pomodoro widget: floating, independent of the card system -->
+<section class="pomodoro" id="pomodoro" hidden>
+  <div class="pomo-head" id="pomoDrag">
+    <span class="pomo-title">Pomodoro</span>
+    <button class="icon-btn sm" id="pomoClose" title="Hide">&times;</button>
+  </div>
+  <div class="pomo-modes" id="pomoModes">
+    <button data-mode="focus" class="active">Focus</button>
+    <button data-mode="short">Short</button>
+    <button data-mode="long">Long</button>
+  </div>
+  <div class="pomo-time" id="pomoTime">25:00</div>
+  <div class="pomo-actions">
+    <button class="btn primary" id="pomoStart">Start</button>
+    <button class="btn" id="pomoReset">Reset</button>
+  </div>
+  <div class="pomo-count" id="pomoCount">0 completed</div>
+</section>
+
+<script src="app.js"></script>
+<script src="pwa.js"></script>
 </body>
 </html>
