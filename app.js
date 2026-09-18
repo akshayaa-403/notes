@@ -1038,7 +1038,7 @@ const calMonth = document.getElementById('calMonth');
 // Which month is on screen. Not persisted — reopening lands on today.
 let calView = new Date();
 
-const DAY_TEXT_MAX = 50;
+const DAY_TEXT_MAX = 75;
 
 // Adjacent-month days are shown for alignment only, so entries key off real
 // dates and a padding cell gets no key at all.
@@ -1086,7 +1086,7 @@ function pickImage(key) {
   inp.click();
 }
 
-/* Swaps the day's note for an input. The 50-character cap is enforced here
+/* Swaps the day's note for an input. The character cap is enforced here
    rather than with maxlength so that overtyping can be explained instead of
    silently ignored. */
 function editText(key, cellNode) {

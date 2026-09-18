@@ -353,12 +353,8 @@ table.grid-table tr:first-child .field{font-weight:600}
 .cal-day.today .cal-num{background:var(--accent);color:#fff;font-weight:600}
 
 /* day contents */
-/* contain, not cover: a day's picture is shown entire whatever its shape.
-   The sunk ground behind it makes the letterboxing read as a mount rather
-   than as a gap. */
 .cal-img{
-  flex:1;min-height:0;width:100%;object-fit:contain;
-  background:var(--bg-sunk);
+  flex:1;min-height:0;width:100%;object-fit:cover;
   border-radius:var(--radius);pointer-events:none;
 }
 .cal-img-x{
