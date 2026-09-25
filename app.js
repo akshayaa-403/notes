@@ -627,14 +627,16 @@ function render() {
   applyZoom();
 }
 
-/* Calendar is a view alongside the three card layouts, but it is not a board
-   layout — it lives on state, so switching to it and back leaves the board's
-   own arrangement exactly as it was. */
+/* Calendar is a tool, not a board layout — it lives on state, so opening it
+   and closing it leaves the board's own arrangement exactly as it was. */
 function syncModeButtons() {
-  const current = state.calendarOpen ? 'calendar' : board().layout;
+  const open = !!state.calendarOpen;
   document.querySelectorAll('#layoutToggle button').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.layout === current);
+    btn.classList.toggle('active', !open && btn.dataset.layout === board().layout);
   });
+  const cal = document.getElementById('calendarBtn');
+  cal.classList.toggle('active', open);
+  cal.setAttribute('aria-pressed', open);
 }
 
 function setMode(mode) {
@@ -651,6 +653,10 @@ function setMode(mode) {
   calPaint();
   render();
 }
+
+document.getElementById('calendarBtn').addEventListener('click', () => {
+  setMode(state.calendarOpen ? board().layout : 'calendar');
+});
 
 function renderTabs() {
   const wrap = document.getElementById('boardTabs');
@@ -904,6 +910,7 @@ document.getElementById('themeBtn').addEventListener('click', () => {
 const POMO_LENGTHS = { focus: 25 * 60, short: 5 * 60, long: 15 * 60 };
 
 const pomoEl = document.getElementById('pomodoro');
+const pomoBtn = document.getElementById('pomodoroBtn');
 const pomoTime = document.getElementById('pomoTime');
 const pomoStart = document.getElementById('pomoStart');
 const pomoCount = document.getElementById('pomoCount');
@@ -915,6 +922,8 @@ const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 
 function pomoPaint() {
   const p = state.pomodoro;
   pomoEl.hidden = !p.visible;
+  pomoBtn.classList.toggle('active', p.visible);
+  pomoBtn.setAttribute('aria-pressed', p.visible);
   pomoTime.textContent = fmt(Math.max(0, p.remaining));
   pomoTime.classList.toggle('running', p.running);
   pomoStart.textContent = p.running ? 'Pause' : 'Start';
@@ -964,7 +973,7 @@ function beep() {
   } catch { /* audio is a nicety, never a failure */ }
 }
 
-document.getElementById('pomodoroBtn').addEventListener('click', () => {
+pomoBtn.addEventListener('click', () => {
   state.pomodoro.visible = !state.pomodoro.visible;
   pomoPaint(); save();
 });

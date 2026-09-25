@@ -50,7 +50,14 @@ try {
       <button data-layout="canvas"  role="tab" title="Free canvas">Canvas</button>
       <button data-layout="grid"    role="tab" title="Masonry grid">Grid</button>
       <button data-layout="columns" role="tab" title="Columns">Columns</button>
-      <button data-layout="calendar" role="tab" title="Picture calendar">Calendar</button>
+    </div>
+
+    <div class="tools" role="group" aria-label="Tools">
+      <span class="tools-label">Tools</span>
+      <div class="segmented">
+        <button id="calendarBtn" aria-pressed="false" title="Picture calendar">Calendar</button>
+        <button id="pomodoroBtn" aria-pressed="false" title="Pomodoro timer">Pomodoro</button>
+      </div>
     </div>
 
     <div class="zoom" id="zoomCtl" hidden>
@@ -64,7 +71,6 @@ try {
       <div class="menu" id="addCardMenu" hidden></div>
     </div>
 
-    <button class="icon-btn" id="pomodoroBtn" title="Pomodoro timer">&#9201;</button>
     <button class="icon-btn" id="themeBtn" title="Toggle theme">&#9789;</button>
   </div>
 </header>

@@ -120,6 +120,9 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 }
 .segmented button.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm);font-weight:500}
 
+.tools{display:flex;align-items:center;gap:6px}
+.tools-label{font-size:11px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em}
+
 /* ============ menus ============ */
 .menu-wrap{position:relative}
 .menu{
@@ -354,7 +357,7 @@ table.grid-table tr:first-child .field{font-weight:600}
 
 /* day contents */
 .cal-img{
-  flex:1;min-height:0;width:100%;object-fit:cover;
+  flex:1;min-height:0;width:100%;object-fit:contain;
   border-radius:var(--radius);pointer-events:none;
 }
 .cal-img-x{
@@ -493,4 +496,5 @@ table.grid-table tr:first-child .field{font-weight:600}
   .board.grid{column-width:auto;column-count:1;padding:14px}
   .wordmark{display:none}
   .segmented button{padding:4px 8px}
+  .tools-label{display:none}
 }
