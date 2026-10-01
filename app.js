@@ -63,6 +63,25 @@ const field = (value, placeholder, oninput, cls = 'field') => autosize(
   el('textarea', { class: cls, rows: 1, placeholder, value: value || '', oninput: (e) => oninput(e.target.value) })
 );
 
+const hostOf = (url) => { try { return new URL(url).hostname; } catch { return url; } };
+// Anything that is not already http(s) gets https:// in front, which also
+// defuses a pasted javascript: URL.
+const safeHref = (url) => (/^https?:\/\//i.test(url) ? url : 'https://' + url);
+const favicon = (url) => el('img', {
+  class: 'link-favicon',
+  alt: '',
+  src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostOf(url))}&sz=32`,
+  onerror: (e) => { e.target.style.visibility = 'hidden'; },
+});
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs = {}, text) => {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
 /* ------------------------------------------------------------------ state */
 
 const blankBoard = (name) => ({
@@ -150,18 +169,11 @@ const TYPES = {
     render(card, body, commit, rerender) {
       const { url, name } = card.data;
       if (url) {
-        let host = url;
-        try { host = new URL(url).hostname; } catch { /* keep raw text */ }
         body.append(
           el('a', { class: 'link-preview', href: url, target: '_blank', rel: 'noopener noreferrer' }, [
-            el('img', {
-              class: 'link-favicon',
-              alt: '',
-              src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`,
-              onerror: (e) => { e.target.style.visibility = 'hidden'; },
-            }),
+            favicon(url),
             el('span', { class: 'link-meta' }, [
-              el('div', { class: 'link-name', text: name || host }),
+              el('div', { class: 'link-name', text: name || hostOf(url) }),
               el('div', { class: 'link-url', text: url }),
             ]),
           ])
@@ -268,12 +280,256 @@ const TYPES = {
     },
   },
 
+  // A shelf of bookmarks, each with a line on why it was kept. Reads as a
+  // list of links; "Edit links" swaps the rows for fields.
+  links: {
+    label: 'Link list',
+    glyph: '\u{1F516}',
+    empty: () => ({ items: [] }),
+    render(card, body, commit, rerender) {
+      const items = card.data.items;
+      if (!editing.has(card.id) && items.length) {
+        body.append(el('div', { class: 'bm-list' }, items.map((it) => {
+          const meta = el('span', { class: 'link-meta' }, [
+            el('div', { class: 'link-name' }, [
+              it.name || hostOf(it.url),
+              it.tag ? el('span', { class: 'bm-tag', text: it.tag }) : null,
+            ]),
+            it.note ? el('div', { class: 'bm-note', text: it.note }) : null,
+          ]);
+          return it.url
+            ? el('a', { class: 'bm', href: safeHref(it.url), target: '_blank', rel: 'noopener noreferrer' }, [favicon(safeHref(it.url)), meta])
+            : el('div', { class: 'bm' }, [el('span', { class: 'link-favicon bm-dot', text: '•' }), meta]);
+        })));
+        body.append(editButton(card, rerender, 'Edit links'));
+        return;
+      }
+      items.forEach((it, i) => body.append(el('div', { class: 'bm-edit' }, [
+        el('div', { class: 'bm-edit-fields' }, [
+          field(it.name, 'Label', (v) => { it.name = v; commit(); }),
+          field(it.url, 'https://…', (v) => { it.url = v.trim(); commit(); }, 'field bm-edit-url'),
+          field(it.note, 'Why it is here', (v) => { it.note = v; commit(); }, 'field bm-edit-note'),
+        ]),
+        el('button', { class: 'del', text: '×', title: 'Remove link', onclick: () => { items.splice(i, 1); commit(); rerender(); } }),
+      ])));
+      body.append(editTools(card, rerender, '+ Link', () => items.push({ name: '', url: '', note: '' }), commit));
+    },
+  },
+
+  // Spider chart. Drag on it to set a spoke; "Edit values" for labels and
+  // exact numbers. With data.auto it charts the links on every board instead.
+  radar: {
+    label: 'Spider chart',
+    glyph: '✳',
+    live: true,
+    empty: () => ({ max: 10, axes: ['One', 'Two', 'Three', 'Four', 'Five'].map((label) => ({ label, value: 5 })) }),
+    render(card, body, commit, rerender) {
+      if (card.data.auto) {
+        const axes = state.boards
+          .map((b) => ({ label: b.name, value: linkUrls(b.cards).length }))
+          .filter((a) => a.value > 0);
+        body.append(axes.length >= 3
+          ? el('div', { class: 'radar' }, [radarSvg(axes, Math.max(...axes.map((a) => a.value)))])
+          : el('p', { class: 'chart-hint', text: 'Needs links on at least three boards.' }));
+        return;
+      }
+
+      const { axes } = card.data;
+      const max = card.data.max || 10;
+      if (axes.length < 3) {
+        body.append(el('p', { class: 'chart-hint', text: 'A spider chart needs at least three spokes.' }));
+      } else {
+        const wrap = el('div', { class: 'radar draggable', title: 'Drag a spoke to set it' }, [radarSvg(axes, max)]);
+        wrap.addEventListener('pointerdown', (e) => dragRadar(e, wrap, axes, max, commit, rerender));
+        body.append(wrap);
+      }
+      if (editing.has(card.id)) {
+        renderPairs(axes, body, commit, rerender);
+        body.append(editTools(card, rerender, '+ Spoke', () => axes.push({ label: '', value: 0 }), commit));
+      } else {
+        body.append(editButton(card, rerender, 'Edit values'));
+      }
+    },
+  },
+
+  bars: {
+    label: 'Bar chart',
+    glyph: '▤',
+    empty: () => ({ unit: '', items: [{ label: '', value: 0 }] }),
+    render(card, body, commit, rerender) {
+      const { items, unit = '' } = card.data;
+      const max = Math.max(0, ...items.map((it) => it.value)) || 1;
+      body.append(el('div', { class: 'bars' }, items.map((it) => {
+        const fill = el('span', { class: 'bar-fill' });
+        fill.style.width = Math.max(0, (it.value / max) * 100) + '%';
+        return el('div', { class: 'bar-row' }, [
+          el('span', { class: 'bar-label', text: it.label }),
+          el('span', { class: 'bar-track' }, [fill]),
+          el('span', { class: 'bar-val', text: it.value + unit }),
+        ]);
+      })));
+      if (editing.has(card.id)) {
+        body.append(field(unit, 'Unit, e.g. %', (v) => { card.data.unit = v; commit(); }, 'field bar-unit'));
+        renderPairs(items, body, commit, rerender);
+        body.append(editTools(card, rerender, '+ Bar', () => items.push({ label: '', value: 0 }), commit));
+      } else {
+        body.append(editButton(card, rerender, 'Edit values'));
+      }
+    },
+  },
+
+  quote: {
+    label: 'Quote',
+    glyph: '❝',
+    empty: () => ({ text: '', by: '' }),
+    render(card, body, commit) {
+      body.append(
+        field(card.data.text, 'Something worth keeping…', (v) => { card.data.text = v; commit(); }, 'field quote-text'),
+        field(card.data.by, 'Who said it', (v) => { card.data.by = v; commit(); }, 'field quote-by'),
+      );
+    },
+  },
+
+  steps: {
+    label: 'Steps',
+    glyph: '⇣',
+    empty: () => ({ items: [{ id: uid(), text: '' }] }),
+    render: (card, body, commit, rerender) => renderList(card, body, commit, rerender, 'step'),
+  },
+
+  // Counts across every board, so it is repainted whenever a box is ticked.
+  stats: {
+    label: 'Stats',
+    glyph: '∑',
+    live: true,
+    empty: () => ({}),
+    render(card, body) {
+      const cards = state.boards.flatMap((b) => b.cards);
+      const tasks = cards.filter((c) => c.type === 'checklist').flatMap((c) => c.data.items).filter((i) => i.text.trim());
+      const done = tasks.filter((i) => i.done).length;
+      const tile = (n, label) => el('div', { class: 'stat' }, [
+        el('div', { class: 'stat-n', text: String(n) }),
+        el('div', { class: 'stat-l', text: label }),
+      ]);
+      const fill = el('span', { class: 'bar-fill' });
+      fill.style.width = (tasks.length ? (done / tasks.length) * 100 : 0) + '%';
+      body.append(
+        el('div', { class: 'stats' }, [
+          tile(state.boards.length, 'boards'),
+          tile(cards.length, 'cards'),
+          tile(linkUrls(cards).length, 'links'),
+          tile(tasks.length - done, 'to do'),
+        ]),
+        el('div', { class: 'stat-progress' }, [
+          el('span', { class: 'bar-track' }, [fill]),
+          el('span', { class: 'bar-val', text: `${done}/${tasks.length} ticked` }),
+        ]),
+      );
+    },
+  },
+
 };
+
+/* Link lists and charts show a finished view and swap to fields on request.
+   Which cards are mid-edit is screen state, not data, so it is not saved. */
+const editing = new Set();
+
+const editButton = (card, rerender, text) => el('button', {
+  class: 'add-row', text,
+  onclick: () => { editing.add(card.id); rerender(); },
+});
+
+const editTools = (card, rerender, addText, add, commit) => el('div', { class: 'table-tools' }, [
+  el('button', { text: addText, onclick: () => { add(); commit(); rerender(); } }),
+  el('button', { text: 'Done', onclick: () => { editing.delete(card.id); rerender(); refreshLive(); } }),
+]);
+
+// Label + number rows, shared by the spider chart and the bar chart.
+function renderPairs(rows, body, commit, rerender) {
+  rows.forEach((row, i) => body.append(el('div', { class: 'pair-row' }, [
+    field(row.label, 'Label', (v) => { row.label = v; commit(); }),
+    el('input', {
+      class: 'pair-num', type: 'number', step: 'any', value: row.value,
+      oninput: (e) => { row.value = Number(e.target.value) || 0; commit(); },
+    }),
+    el('button', { class: 'del', text: '×', title: 'Remove', onclick: () => { rows.splice(i, 1); commit(); rerender(); } }),
+  ])));
+}
+
+const linkUrls = (cards) => cards.flatMap((c) =>
+  c.type === 'link' ? [c.data.url] : c.type === 'links' ? c.data.items.map((i) => i.url) : []
+).filter(Boolean);
+
+const RADAR = { w: 320, h: 250, cx: 160, cy: 125, r: 80 };
+
+function radarSvg(axes, max) {
+  const { w, h, cx, cy, r } = RADAR;
+  const angle = (i) => -Math.PI / 2 + (i * 2 * Math.PI) / axes.length;
+  const pt = (i, f) => [cx + Math.cos(angle(i)) * r * f, cy + Math.sin(angle(i)) * r * f].map((n) => n.toFixed(1)).join(',');
+  const frac = (a) => Math.max(0, Math.min(1, a.value / max));
+
+  const s = svgEl('svg', {
+    class: 'radar-svg', viewBox: `0 0 ${w} ${h}`, role: 'img',
+    'aria-label': axes.map((a) => `${a.label}: ${a.value}`).join(', '),
+  });
+  [0.25, 0.5, 0.75, 1].forEach((f) => s.append(svgEl('polygon', { class: 'radar-ring', points: axes.map((_, i) => pt(i, f)).join(' ') })));
+  axes.forEach((a, i) => {
+    const [x2, y2] = pt(i, 1).split(',');
+    s.append(svgEl('line', { class: 'radar-spoke', x1: cx, y1: cy, x2, y2 }));
+    const [lx, ly] = pt(i, 1.14).split(',');
+    const cos = Math.cos(angle(i));
+    const label = svgEl('text', {
+      class: 'radar-label', x: lx, y: ly, 'dominant-baseline': 'middle',
+      'text-anchor': Math.abs(cos) < 0.3 ? 'middle' : cos > 0 ? 'start' : 'end',
+    }, a.label);
+    label.append(svgEl('tspan', { class: 'radar-val' }, ` ${a.value}`));
+    s.append(label);
+  });
+  s.append(svgEl('polygon', { class: 'radar-area', points: axes.map((a, i) => pt(i, frac(a))).join(' ') }));
+  axes.forEach((a, i) => {
+    const [x, y] = pt(i, frac(a)).split(',');
+    s.append(svgEl('circle', { class: 'radar-dot', cx: x, cy: y, r: 3 }));
+  });
+  return s;
+}
+
+// The spoke nearest the pointer takes the value under it, whole numbers only.
+function dragRadar(e, wrap, axes, max, commit, rerender) {
+  e.preventDefault();
+  const set = (ev) => {
+    const box = wrap.firstChild.getBoundingClientRect();
+    const x = ((ev.clientX - box.left) * RADAR.w) / box.width - RADAR.cx;
+    const y = ((ev.clientY - box.top) * RADAR.h) / box.height - RADAR.cy;
+    const n = axes.length;
+    const i = ((Math.round((Math.atan2(y, x) + Math.PI / 2) / ((2 * Math.PI) / n)) % n) + n) % n;
+    axes[i].value = Math.round(Math.min(1, Math.hypot(x, y) / RADAR.r) * max);
+    wrap.replaceChildren(radarSvg(axes, max));
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', set);
+    window.removeEventListener('pointerup', up);
+    commit(); rerender();
+  };
+  set(e);
+  window.addEventListener('pointermove', set);
+  window.addEventListener('pointerup', up);
+}
+
+// Repaint the cards that summarise other cards, keeping their canvas position.
+function refreshLive() {
+  boardEl.querySelectorAll('.card[data-live]').forEach((n) => {
+    const card = findCard(n.dataset.id);
+    if (!card) return;
+    const fresh = renderCard(card);
+    fresh.style.cssText = n.style.cssText;
+    n.replaceWith(fresh);
+  });
+}
 
 /* Shared renderer for the three list-ish types. */
 function renderList(card, body, commit, rerender, kind) {
   const items = card.data.items;
-  const list = el('div', { class: 'list' });
+  const list = el('div', { class: 'list ' + kind });
 
   items.forEach((item, i) => {
     const row = el('div', { class: 'list-row' + (item.done ? ' done' : '') });
@@ -285,10 +541,12 @@ function renderList(card, body, commit, rerender, kind) {
         item.done = cb.checked;
         row.classList.toggle('done', cb.checked);
         commit();
+        refreshLive();
       });
       row.append(cb);
     } else {
-      row.append(el('span', { class: 'bullet', text: kind === 'number' ? `${i + 1}.` : '•' }));
+      const mark = { number: `${i + 1}.`, step: String(i + 1) }[kind] || '•';
+      row.append(el('span', { class: 'bullet', text: mark }));
     }
 
     const input = field(item.text, 'List item', (v) => { item.text = v; commit(); });
@@ -331,7 +589,7 @@ function renderList(card, body, commit, rerender, kind) {
 /* ------------------------------------------------------------ card render */
 
 function renderCard(card) {
-  const node = el('div', { class: 'card', 'data-id': card.id });
+  const node = el('div', { class: 'card', 'data-id': card.id, 'data-live': TYPES[card.type].live ? '' : null });
   node.style.setProperty('--card-bg', `var(--c-${card.color || 'default'})`);
 
   const paint = (focusIndex) => {
@@ -1267,6 +1525,37 @@ if (state.pomodoro.running) state.pomodoro.running = false;
 
 // State saved before day entries existed has no store to read from.
 state.calendarDays ||= {};
+
+/* resources.js carries boards built from the notebook PDFs. Each pack is
+   added once, beside whatever boards already exist — never over them — and
+   remembered in state.seeded so deleting a board does not bring it back. */
+if (window.SEED && !(state.seeded ||= []).includes(SEED.id)) {
+  // An untouched starter board is only a placeholder; drop it rather than
+  // leave an empty tab in front of the imported ones.
+  state.boards = state.boards.filter((b) => b.cards.length || b.name !== 'My board');
+  const added = SEED.boards.map((spec) => {
+    const b = blankBoard(spec.name);
+    b.layout = spec.layout || 'grid';
+    if (spec.columns) b.columns = spec.columns.map((name) => ({ id: uid(), name }));
+    b.cards = spec.cards.map((c, i) => ({
+      id: uid(),
+      type: c.type,
+      title: c.title || '',
+      color: c.color || 'default',
+      data: c.data,
+      x: 40 + (i % 4) * 300,
+      y: 40 + Math.floor(i / 4) * 340,
+      w: null,
+      order: i,
+      columnId: (b.columns.find((col) => col.name === c.col) || b.columns[0]).id,
+    }));
+    return b;
+  });
+  state.boards.push(...added);
+  state.activeBoard = added[0].id;
+  state.seeded.push(SEED.id);
+  save();
+}
 
 applyTheme();
 pomoPaint();

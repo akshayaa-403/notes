@@ -10,7 +10,7 @@
    which avoids the half-old-half-new state that per-file expiry invites.
    ========================================================================= */
 
-const CACHE = 'notes-shell-v7';
+const CACHE = 'notes-shell-v8';
 
 /* Relative, not root-absolute: in a service worker these resolve against the
    worker's own URL, so the app works unchanged whether it is served from a
@@ -20,6 +20,7 @@ const SHELL = [
   './index.html',
   './style.css',
   './app.js',
+  './resources.js',
   './pwa.js',
   './manifest.webmanifest',
   './favicon.ico',
