@@ -225,6 +225,7 @@ button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
 }
 .card-title:focus{outline:none;background:rgba(127,127,127,.10)}
 .card-title::placeholder{color:var(--text-faint);font-weight:500}
+.card-fold{flex:none;color:var(--text-faint);font-size:11px}
 .card-menu-btn{opacity:0;transition:opacity .12s}
 .card:hover .card-menu-btn,.card-menu-btn:focus{opacity:1}
 .card-body{padding:2px 10px 10px}
@@ -288,12 +289,129 @@ table.grid-table td{border:1px solid var(--border);padding:0;min-width:66px}
 table.grid-table td .field{padding:5px 6px;border-radius:0}
 table.grid-table tr:first-child td{background:var(--surface-2)}
 table.grid-table tr:first-child .field{font-weight:600}
+.cell-link{display:flex;align-items:center}
+.cell-go{flex:none;padding:0 6px;color:var(--accent);text-decoration:none;font-size:12px}
+.cell-go[hidden]{display:none}
+.cell-select{
+  width:100%;border:0;font:inherit;font-size:12.5px;color:var(--text);
+  padding:5px 6px;background:transparent;cursor:pointer;
+}
+.cell-select:focus{outline:2px solid var(--accent);outline-offset:-2px}
+.cell-select[data-v="To apply"]{background:var(--c-gray)}
+.cell-select[data-v="Applied"]{background:var(--c-blue)}
+.cell-select[data-v="Assessment"]{background:var(--c-yellow)}
+.cell-select[data-v="Interviewing"]{background:var(--c-purple)}
+.cell-select[data-v="Offer"]{background:var(--c-green)}
+.cell-select[data-v="Rejected"]{background:var(--c-red)}
+.cell-select[data-v="Ghosted"]{background:var(--c-brown)}
 .table-tools{display:flex;gap:6px;margin-top:6px}
 .table-tools button{
   border:1px solid var(--border);background:transparent;border-radius:4px;
   padding:2px 8px;font-size:12px;color:var(--text-dim);
 }
 .table-tools button:hover{background:var(--surface-2);color:var(--text)}
+
+/* link list */
+.bm-list{display:flex;flex-direction:column;gap:1px;margin:0 -4px}
+.bm{
+  display:flex;align-items:flex-start;gap:9px;padding:5px 4px;border-radius:var(--radius);
+  text-decoration:none;color:inherit;
+}
+a.bm:hover{background:rgba(127,127,127,.10)}
+a.bm:hover .link-name{color:var(--accent)}
+.bm .link-favicon{margin-top:2px}
+.bm-dot{display:grid;place-items:center;color:var(--text-faint)}
+.bm .link-name{font-size:13px}
+.bm-note{font-size:12px;color:var(--text-dim);line-height:1.4}
+.bm-tag{
+  display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;vertical-align:1px;
+  font-size:10px;font-weight:500;color:var(--text-dim);background:var(--surface-2);border:1px solid var(--border);
+}
+.bm-group-head{display:flex;align-items:center}
+.bm-group-toggle{
+  flex:1;min-width:0;display:flex;align-items:center;gap:9px;text-align:left;
+  border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;
+  padding:5px 4px;border-radius:var(--radius);
+}
+.bm-group-toggle:hover{background:rgba(127,127,127,.10)}
+.bm-group-caret{width:16px;flex:none;text-align:center;color:var(--text-faint);font-size:11px}
+.bm-group-toggle .link-name{flex:1;font-weight:600}
+/* Open, the group scrolls inside the card instead of growing it. */
+.bm-sub{
+  max-height:260px;overflow-y:auto;overscroll-behavior:contain;
+  margin:2px 0 4px 12px;padding-left:6px;border-left:2px solid var(--border);
+}
+.bm-row{display:flex;align-items:flex-start}
+.bm-row .bm{flex:1;min-width:0}
+.bm-row .del{
+  flex:none;border:0;background:transparent;color:var(--text-faint);
+  padding:4px 6px;margin-top:3px;border-radius:4px;opacity:0;transition:opacity .12s;
+}
+.bm-row:hover .del,.bm-row .del:focus{opacity:1}
+.bm-row .del:hover{background:rgba(127,127,127,.15);color:var(--text)}
+@media (hover:none){.bm-row .del{opacity:1}}
+.bm-edit{display:flex;gap:4px;padding:4px 0;border-bottom:1px solid var(--border)}
+.bm-edit-fields{flex:1;min-width:0}
+.bm-edit-url,.bm-edit-note{font-size:12px;color:var(--text-dim)}
+.bm-edit .del{
+  border:0;background:transparent;color:var(--text-faint);padding:2px 5px;border-radius:4px;align-self:flex-start;
+}
+.bm-edit .del:hover{background:rgba(127,127,127,.15);color:var(--text)}
+
+/* charts */
+.radar{margin:0 -6px}
+.radar.draggable{cursor:crosshair;touch-action:none}
+.radar-svg{display:block;width:100%;height:auto;overflow:visible}
+.radar-ring{fill:none;stroke:var(--border-strong);stroke-width:1}
+.radar-spoke{stroke:var(--border);stroke-width:1}
+.radar-area{fill:var(--accent);fill-opacity:.18;stroke:var(--accent);stroke-width:2;stroke-linejoin:round}
+.radar-dot{fill:var(--accent)}
+.radar-label{font-size:10.5px;fill:var(--text-dim);font-family:var(--font)}
+.radar-val{fill:var(--text);font-weight:600}
+.chart-hint{margin:6px 4px;font-size:12px;color:var(--text-faint)}
+
+.bars{display:flex;flex-direction:column;gap:7px;padding:4px 0 6px}
+.bar-row{display:grid;grid-template-columns:minmax(0,38%) 1fr auto;align-items:center;gap:8px;font-size:12px}
+.bar-label{color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{height:8px;border-radius:99px;background:var(--surface-2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--border)}
+.bar-fill{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.bar-val{font-variant-numeric:tabular-nums;font-weight:600;color:var(--text)}
+.bar-unit{font-size:12px;color:var(--text-dim)}
+
+.pair-row{display:flex;align-items:flex-start;gap:4px}
+.pair-row .field{flex:1}
+.pair-num{
+  width:64px;flex:none;border:1px solid var(--border);border-radius:4px;background:transparent;
+  color:var(--text);font:inherit;font-size:12px;padding:3px 5px;margin-top:1px;
+}
+.pair-row .del{border:0;background:transparent;color:var(--text-faint);padding:2px 5px;border-radius:4px}
+.pair-row .del:hover{background:rgba(127,127,127,.15);color:var(--text)}
+
+/* quote */
+.quote-text{
+  font-family:Georgia,"Times New Roman",serif;font-size:15.5px;line-height:1.5;
+  border-left:3px solid var(--accent);border-radius:0;padding-left:12px;
+}
+.quote-by{font-size:12px;color:var(--text-dim);text-align:right}
+
+/* steps: numbered dots on one rail */
+.list.step{gap:0}
+.list.step .list-row{position:relative;padding-bottom:6px}
+.list.step .list-row:not(:last-child)::before{
+  content:"";position:absolute;left:9px;top:22px;bottom:0;width:2px;background:var(--border-strong);
+}
+.list.step .bullet{
+  width:20px;height:20px;min-width:0;padding:0;margin-top:2px;border-radius:50%;
+  display:grid;place-items:center;text-align:center;
+  background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:11px;
+}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:2px 0 8px}
+.stat{background:var(--surface-2);border-radius:var(--radius);padding:8px 6px;text-align:center}
+.stat-n{font-size:22px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat-l{font-size:11px;color:var(--text-dim)}
+.stat-progress{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;font-size:12px}
 
 /* canvas resize handle */
 .resize-handle{
@@ -465,6 +583,69 @@ table.grid-table tr:first-child .field{font-weight:600}
 }
 
 .btn.sm{padding:2px 8px;font-size:12px}
+
+/* ============ legend ============
+   Fixed at the right edge, under the top bar and clear of the pomodoro in
+   the bottom corner. The board gives up the same width, so the canvas fit
+   never parks a card underneath it. */
+.legend{
+  position:fixed;z-index:60;width:184px;
+  top:calc(var(--topbar-total) + 16px);right:calc(16px + env(safe-area-inset-right));
+  max-height:calc(100dvh - var(--topbar-total) - 32px);overflow-y:auto;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);box-shadow:var(--shadow-md);padding:8px;
+}
+.legend[hidden]{display:none}
+.board.has-legend{padding-right:216px}
+.legend-head{
+  display:flex;align-items:center;justify-content:space-between;padding:2px 4px 6px;
+  font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;
+}
+.legend-clear{border:0;background:transparent;color:var(--accent);font-size:11.5px;padding:0;cursor:pointer;text-transform:none;letter-spacing:0}
+.legend-row{display:flex;align-items:center;border-radius:6px}
+.legend-row:hover{background:rgba(127,127,127,.08)}
+.legend-row.off{opacity:.45}
+.legend-item{
+  flex:1;min-width:0;display:flex;align-items:center;gap:8px;text-align:left;
+  border:0;background:transparent;color:var(--text);font:inherit;font-size:12.5px;
+  padding:5px 4px;border-radius:6px;cursor:pointer;
+}
+.legend-item[aria-pressed="true"] .legend-label{font-weight:600}
+.legend-swatch{flex:none;width:14px;height:14px;border-radius:4px;border:1px solid var(--border-strong)}
+.legend-item[aria-pressed="true"] .legend-swatch{outline:2px solid var(--accent);outline-offset:1px}
+.legend-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.legend-count{flex:none;font-size:11px;color:var(--text-faint)}
+.legend-edit{
+  flex:none;border:0;background:transparent;color:var(--text-faint);font-size:11px;
+  padding:4px 6px;border-radius:4px;cursor:pointer;opacity:0;
+}
+.legend-row:hover .legend-edit,.legend-edit:focus{opacity:1}
+.legend-edit:hover{background:rgba(127,127,127,.15);color:var(--text)}
+.legend-input{
+  width:100%;font:inherit;font-size:12.5px;color:var(--text);background:var(--bg);
+  border:1px solid var(--accent);border-radius:6px;padding:4px 6px;
+}
+@media (hover:none){.legend-edit{opacity:1}}
+
+/* Canvas keeps its layout and only fades the rest, so the filter does not
+   tear holes in an arrangement; grid and columns close up instead. */
+.board.canvas .card.filtered-out{opacity:.12;pointer-events:none}
+.board:not(.canvas) .card.filtered-out{display:none}
+
+/* Phones: the top bar wraps there, so the legend becomes a strip of
+   swatches and counts along the bottom, left of the pomodoro corner. */
+@media (max-width:700px){
+  .legend{
+    top:auto;right:auto;width:auto;max-width:calc(100vw - 32px);
+    bottom:calc(16px + env(safe-area-inset-bottom));left:calc(16px + env(safe-area-inset-left));
+    display:flex;overflow-x:auto;padding:4px;
+  }
+  .legend[hidden]{display:none}
+  .legend-head{display:flex;padding:0 4px}
+  .legend-head > span,.legend-label,.legend-edit{display:none}
+  .legend-item{gap:4px;padding:5px}
+  .board.has-legend{padding-right:0;padding-bottom:64px}
+}
 
 /* Update prompt from pwa.js. Above the pomodoro widget (z-index 70) — it is
    asking a question and should not end up behind a floating timer. */
