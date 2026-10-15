@@ -63,6 +63,25 @@ const field = (value, placeholder, oninput, cls = 'field') => autosize(
   el('textarea', { class: cls, rows: 1, placeholder, value: value || '', oninput: (e) => oninput(e.target.value) })
 );
 
+const hostOf = (url) => { try { return new URL(url).hostname; } catch { return url; } };
+// Anything that is not already http(s) gets https:// in front, which also
+// defuses a pasted javascript: URL.
+const safeHref = (url) => (/^https?:\/\//i.test(url) ? url : 'https://' + url);
+const favicon = (url) => el('img', {
+  class: 'link-favicon',
+  alt: '',
+  src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostOf(url))}&sz=32`,
+  onerror: (e) => { e.target.style.visibility = 'hidden'; },
+});
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs = {}, text) => {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
 /* ------------------------------------------------------------------ state */
 
 const blankBoard = (name) => ({
@@ -150,18 +169,11 @@ const TYPES = {
     render(card, body, commit, rerender) {
       const { url, name } = card.data;
       if (url) {
-        let host = url;
-        try { host = new URL(url).hostname; } catch { /* keep raw text */ }
         body.append(
           el('a', { class: 'link-preview', href: url, target: '_blank', rel: 'noopener noreferrer' }, [
-            el('img', {
-              class: 'link-favicon',
-              alt: '',
-              src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`,
-              onerror: (e) => { e.target.style.visibility = 'hidden'; },
-            }),
+            favicon(url),
             el('span', { class: 'link-meta' }, [
-              el('div', { class: 'link-name', text: name || host }),
+              el('div', { class: 'link-name', text: name || hostOf(url) }),
               el('div', { class: 'link-url', text: url }),
             ]),
           ])
@@ -236,13 +248,32 @@ const TYPES = {
     label: 'Table',
     glyph: '▦',
     empty: () => ({ rows: [['Column', 'Column'], ['', '']] }),
+    // data.cols is optional, one entry per column: { kind: 'link' } adds an
+    // open arrow beside the cell, { kind: 'select', options } makes it a
+    // dropdown. The header row is always plain text.
     render(card, body, commit, rerender) {
       const rows = card.data.rows;
+      const cols = card.data.cols;
       const table = el('table', { class: 'grid-table' });
       rows.forEach((row, r) => {
         const tr = el('tr');
         row.forEach((cell, c) => {
-          tr.append(el('td', {}, [field(cell, '', (v) => { rows[r][c] = v; commit(); })]));
+          const kind = r > 0 && cols && cols[c] ? cols[c] : {};
+          const set = (v) => { rows[r][c] = v; commit(); };
+          if (kind.kind === 'select') {
+            const sel = el('select', { class: 'cell-select', onchange: (e) => { sel.dataset.v = e.target.value; set(e.target.value); } },
+              ['', ...kind.options].map((o) => el('option', { value: o, text: o || '—' })));
+            sel.value = sel.dataset.v = cell;
+            tr.append(el('td', {}, [sel]));
+          } else if (kind.kind === 'link') {
+            const go = el('a', { class: 'cell-go', text: '↗', title: 'Open', target: '_blank', rel: 'noopener noreferrer', href: safeHref(cell), hidden: !cell });
+            tr.append(el('td', {}, [el('div', { class: 'cell-link' }, [
+              field(cell, 'https://…', (v) => { v = v.trim(); go.href = safeHref(v); go.hidden = !v; set(v); }),
+              go,
+            ])]));
+          } else {
+            tr.append(el('td', {}, [field(cell, '', set)]));
+          }
         });
         table.append(tr);
       });
@@ -254,7 +285,7 @@ const TYPES = {
         }),
         el('button', {
           text: '+ Column',
-          onclick: () => { rows.forEach((r) => r.push('')); commit(); rerender(); },
+          onclick: () => { rows.forEach((r) => r.push('')); cols?.push({}); commit(); rerender(); },
         }),
         el('button', {
           text: '− Row',
@@ -262,18 +293,292 @@ const TYPES = {
         }),
         el('button', {
           text: '− Column',
-          onclick: () => { if (rows[0].length > 1) { rows.forEach((r) => r.pop()); commit(); rerender(); } },
+          onclick: () => { if (rows[0].length > 1) { rows.forEach((r) => r.pop()); cols?.pop(); commit(); rerender(); } },
         }),
       ]));
     },
   },
 
+  // A shelf of bookmarks, each with a line on why it was kept. Reads as a
+  // list of links; "Edit links" swaps the rows for fields.
+  links: {
+    label: 'Link list',
+    glyph: '\u{1F516}',
+    empty: () => ({ items: [] }),
+    render(card, body, commit, rerender) {
+      const items = card.data.items;
+      if (!editing.has(card.id) && items.length) {
+        const bmRow = (it, list) => {
+          const meta = el('span', { class: 'link-meta' }, [
+            el('div', { class: 'link-name' }, [
+              it.name || hostOf(it.url),
+              it.tag ? el('span', { class: 'bm-tag', text: it.tag }) : null,
+            ]),
+            it.note ? el('div', { class: 'bm-note', text: it.note }) : null,
+          ]);
+          const row = it.url
+            ? el('a', { class: 'bm', href: safeHref(it.url), target: '_blank', rel: 'noopener noreferrer' }, [favicon(safeHref(it.url)), meta])
+            : el('div', { class: 'bm' }, [el('span', { class: 'link-favicon bm-dot', text: '•' }), meta]);
+          // Outside the <a>, so removing a link never also opens it.
+          return el('div', { class: 'bm-row' }, [row, el('button', {
+            class: 'del', text: '×', title: 'Remove link',
+            onclick: () => { list.splice(list.indexOf(it), 1); commit(); rerender(); refreshLive(); },
+          })]);
+        };
+        // An item with children is a folding group: closed it is one line,
+        // open its links scroll inside a fixed height, so a long playlist
+        // never stretches the card (and with it the whole canvas).
+        const groupRow = (it) => el('div', { class: 'bm-group' }, [
+          el('div', { class: 'bm-group-head' }, [
+            el('button', {
+              class: 'bm-group-toggle', 'aria-expanded': String(!!it.open),
+              onclick: () => { it.open = !it.open; commit(); rerender(); },
+            }, [
+              el('span', { class: 'bm-group-caret', text: it.open ? '▾' : '▸' }),
+              el('span', { class: 'link-name', text: it.name || hostOf(it.url) }),
+              el('span', { class: 'legend-count', text: String(it.children.length) }),
+            ]),
+            it.url ? el('a', { class: 'cell-go', text: '↗', title: 'Open', href: safeHref(it.url), target: '_blank', rel: 'noopener noreferrer' }) : null,
+          ]),
+          it.open ? el('div', { class: 'bm-list bm-sub' }, it.children.map((c) => bmRow(c, it.children))) : null,
+        ]);
+        body.append(el('div', { class: 'bm-list' }, items.map((it) => (it.children ? groupRow(it) : bmRow(it, items)))));
+        // Adding opens the editor, since a new link is nothing until it has a URL.
+        body.append(el('div', { class: 'table-tools' }, [
+          el('button', { text: '+ Add link', onclick: () => { items.push({ name: '', url: '', note: '' }); editing.add(card.id); commit(); rerender(); } }),
+          el('button', { text: 'Edit links', onclick: () => { editing.add(card.id); rerender(); } }),
+        ]));
+        return;
+      }
+      items.forEach((it, i) => body.append(el('div', { class: 'bm-edit' }, [
+        el('div', { class: 'bm-edit-fields' }, [
+          field(it.name, 'Label', (v) => { it.name = v; commit(); }),
+          field(it.url, 'https://…', (v) => { it.url = v.trim(); commit(); }, 'field bm-edit-url'),
+          it.children
+            ? el('div', { class: 'bm-note', text: `Group of ${it.children.length} links — add or remove them from the list view.` })
+            : field(it.note, 'Why it is here', (v) => { it.note = v; commit(); }, 'field bm-edit-note'),
+        ]),
+        el('button', { class: 'del', text: '×', title: 'Remove link', onclick: () => { items.splice(i, 1); commit(); rerender(); } }),
+      ])));
+      body.append(editTools(card, rerender, '+ Link', () => items.push({ name: '', url: '', note: '' }), commit));
+    },
+  },
+
+  // Spider chart. Drag on it to set a spoke; "Edit values" for labels and
+  // exact numbers. With data.auto it charts the links on every board instead.
+  radar: {
+    label: 'Spider chart',
+    glyph: '✳',
+    live: true,
+    empty: () => ({ max: 10, axes: ['One', 'Two', 'Three', 'Four', 'Five'].map((label) => ({ label, value: 5 })) }),
+    render(card, body, commit, rerender) {
+      if (card.data.auto) {
+        const axes = state.boards
+          .map((b) => ({ label: b.name, value: linkUrls(b.cards).length }))
+          .filter((a) => a.value > 0);
+        body.append(axes.length >= 3
+          ? el('div', { class: 'radar' }, [radarSvg(axes, Math.max(...axes.map((a) => a.value)))])
+          : el('p', { class: 'chart-hint', text: 'Needs links on at least three boards.' }));
+        return;
+      }
+
+      const { axes } = card.data;
+      const max = card.data.max || 10;
+      if (axes.length < 3) {
+        body.append(el('p', { class: 'chart-hint', text: 'A spider chart needs at least three spokes.' }));
+      } else {
+        const wrap = el('div', { class: 'radar draggable', title: 'Drag a spoke to set it' }, [radarSvg(axes, max)]);
+        wrap.addEventListener('pointerdown', (e) => dragRadar(e, wrap, axes, max, commit, rerender));
+        body.append(wrap);
+      }
+      if (editing.has(card.id)) {
+        renderPairs(axes, body, commit, rerender);
+        body.append(editTools(card, rerender, '+ Spoke', () => axes.push({ label: '', value: 0 }), commit));
+      } else {
+        body.append(editButton(card, rerender, 'Edit values'));
+      }
+    },
+  },
+
+  bars: {
+    label: 'Bar chart',
+    glyph: '▤',
+    empty: () => ({ unit: '', items: [{ label: '', value: 0 }] }),
+    render(card, body, commit, rerender) {
+      const { items, unit = '' } = card.data;
+      const max = Math.max(0, ...items.map((it) => it.value)) || 1;
+      body.append(el('div', { class: 'bars' }, items.map((it) => {
+        const fill = el('span', { class: 'bar-fill' });
+        fill.style.width = Math.max(0, (it.value / max) * 100) + '%';
+        return el('div', { class: 'bar-row' }, [
+          el('span', { class: 'bar-label', text: it.label }),
+          el('span', { class: 'bar-track' }, [fill]),
+          el('span', { class: 'bar-val', text: it.value + unit }),
+        ]);
+      })));
+      if (editing.has(card.id)) {
+        body.append(field(unit, 'Unit, e.g. %', (v) => { card.data.unit = v; commit(); }, 'field bar-unit'));
+        renderPairs(items, body, commit, rerender);
+        body.append(editTools(card, rerender, '+ Bar', () => items.push({ label: '', value: 0 }), commit));
+      } else {
+        body.append(editButton(card, rerender, 'Edit values'));
+      }
+    },
+  },
+
+  quote: {
+    label: 'Quote',
+    glyph: '❝',
+    empty: () => ({ text: '', by: '' }),
+    render(card, body, commit) {
+      body.append(
+        field(card.data.text, 'Something worth keeping…', (v) => { card.data.text = v; commit(); }, 'field quote-text'),
+        field(card.data.by, 'Who said it', (v) => { card.data.by = v; commit(); }, 'field quote-by'),
+      );
+    },
+  },
+
+  steps: {
+    label: 'Steps',
+    glyph: '⇣',
+    empty: () => ({ items: [{ id: uid(), text: '' }] }),
+    render: (card, body, commit, rerender) => renderList(card, body, commit, rerender, 'step'),
+  },
+
+  // Counts across every board, so it is repainted whenever a box is ticked.
+  stats: {
+    label: 'Stats',
+    glyph: '∑',
+    live: true,
+    empty: () => ({}),
+    render(card, body) {
+      const cards = state.boards.flatMap((b) => b.cards);
+      const tasks = cards.filter((c) => c.type === 'checklist').flatMap((c) => c.data.items).filter((i) => i.text.trim());
+      const done = tasks.filter((i) => i.done).length;
+      const tile = (n, label) => el('div', { class: 'stat' }, [
+        el('div', { class: 'stat-n', text: String(n) }),
+        el('div', { class: 'stat-l', text: label }),
+      ]);
+      const fill = el('span', { class: 'bar-fill' });
+      fill.style.width = (tasks.length ? (done / tasks.length) * 100 : 0) + '%';
+      body.append(
+        el('div', { class: 'stats' }, [
+          tile(state.boards.length, 'boards'),
+          tile(cards.length, 'cards'),
+          tile(linkUrls(cards).length, 'links'),
+          tile(tasks.length - done, 'to do'),
+        ]),
+        el('div', { class: 'stat-progress' }, [
+          el('span', { class: 'bar-track' }, [fill]),
+          el('span', { class: 'bar-val', text: `${done}/${tasks.length} ticked` }),
+        ]),
+      );
+    },
+  },
+
 };
+
+/* Link lists and charts show a finished view and swap to fields on request.
+   Which cards are mid-edit is screen state, not data, so it is not saved. */
+const editing = new Set();
+
+const editButton = (card, rerender, text) => el('button', {
+  class: 'add-row', text,
+  onclick: () => { editing.add(card.id); rerender(); },
+});
+
+const editTools = (card, rerender, addText, add, commit) => el('div', { class: 'table-tools' }, [
+  el('button', { text: addText, onclick: () => { add(); commit(); rerender(); } }),
+  el('button', { text: 'Done', onclick: () => { editing.delete(card.id); rerender(); refreshLive(); } }),
+]);
+
+// Label + number rows, shared by the spider chart and the bar chart.
+function renderPairs(rows, body, commit, rerender) {
+  rows.forEach((row, i) => body.append(el('div', { class: 'pair-row' }, [
+    field(row.label, 'Label', (v) => { row.label = v; commit(); }),
+    el('input', {
+      class: 'pair-num', type: 'number', step: 'any', value: row.value,
+      oninput: (e) => { row.value = Number(e.target.value) || 0; commit(); },
+    }),
+    el('button', { class: 'del', text: '×', title: 'Remove', onclick: () => { rows.splice(i, 1); commit(); rerender(); } }),
+  ])));
+}
+
+const linkUrls = (cards) => cards.flatMap((c) =>
+  c.type === 'link' ? [c.data.url]
+    : c.type === 'links' ? c.data.items.flatMap((i) => [i.url, ...(i.children || []).map((k) => k.url)]) : []
+).filter(Boolean);
+
+const RADAR = { w: 320, h: 250, cx: 160, cy: 125, r: 80 };
+
+function radarSvg(axes, max) {
+  const { w, h, cx, cy, r } = RADAR;
+  const angle = (i) => -Math.PI / 2 + (i * 2 * Math.PI) / axes.length;
+  const pt = (i, f) => [cx + Math.cos(angle(i)) * r * f, cy + Math.sin(angle(i)) * r * f].map((n) => n.toFixed(1)).join(',');
+  const frac = (a) => Math.max(0, Math.min(1, a.value / max));
+
+  const s = svgEl('svg', {
+    class: 'radar-svg', viewBox: `0 0 ${w} ${h}`, role: 'img',
+    'aria-label': axes.map((a) => `${a.label}: ${a.value}`).join(', '),
+  });
+  [0.25, 0.5, 0.75, 1].forEach((f) => s.append(svgEl('polygon', { class: 'radar-ring', points: axes.map((_, i) => pt(i, f)).join(' ') })));
+  axes.forEach((a, i) => {
+    const [x2, y2] = pt(i, 1).split(',');
+    s.append(svgEl('line', { class: 'radar-spoke', x1: cx, y1: cy, x2, y2 }));
+    const [lx, ly] = pt(i, 1.14).split(',');
+    const cos = Math.cos(angle(i));
+    const label = svgEl('text', {
+      class: 'radar-label', x: lx, y: ly, 'dominant-baseline': 'middle',
+      'text-anchor': Math.abs(cos) < 0.3 ? 'middle' : cos > 0 ? 'start' : 'end',
+    }, a.label);
+    label.append(svgEl('tspan', { class: 'radar-val' }, ` ${a.value}`));
+    s.append(label);
+  });
+  s.append(svgEl('polygon', { class: 'radar-area', points: axes.map((a, i) => pt(i, frac(a))).join(' ') }));
+  axes.forEach((a, i) => {
+    const [x, y] = pt(i, frac(a)).split(',');
+    s.append(svgEl('circle', { class: 'radar-dot', cx: x, cy: y, r: 3 }));
+  });
+  return s;
+}
+
+// The spoke nearest the pointer takes the value under it, whole numbers only.
+function dragRadar(e, wrap, axes, max, commit, rerender) {
+  e.preventDefault();
+  const set = (ev) => {
+    const box = wrap.firstChild.getBoundingClientRect();
+    const x = ((ev.clientX - box.left) * RADAR.w) / box.width - RADAR.cx;
+    const y = ((ev.clientY - box.top) * RADAR.h) / box.height - RADAR.cy;
+    const n = axes.length;
+    const i = ((Math.round((Math.atan2(y, x) + Math.PI / 2) / ((2 * Math.PI) / n)) % n) + n) % n;
+    axes[i].value = Math.round(Math.min(1, Math.hypot(x, y) / RADAR.r) * max);
+    wrap.replaceChildren(radarSvg(axes, max));
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', set);
+    window.removeEventListener('pointerup', up);
+    commit(); rerender();
+  };
+  set(e);
+  window.addEventListener('pointermove', set);
+  window.addEventListener('pointerup', up);
+}
+
+// Repaint the cards that summarise other cards, keeping their canvas position.
+function refreshLive() {
+  boardEl.querySelectorAll('.card[data-live]').forEach((n) => {
+    const card = findCard(n.dataset.id);
+    if (!card) return;
+    const fresh = renderCard(card);
+    fresh.style.cssText = n.style.cssText;
+    n.replaceWith(fresh);
+  });
+}
 
 /* Shared renderer for the three list-ish types. */
 function renderList(card, body, commit, rerender, kind) {
   const items = card.data.items;
-  const list = el('div', { class: 'list' });
+  const list = el('div', { class: 'list ' + kind });
 
   items.forEach((item, i) => {
     const row = el('div', { class: 'list-row' + (item.done ? ' done' : '') });
@@ -285,10 +590,12 @@ function renderList(card, body, commit, rerender, kind) {
         item.done = cb.checked;
         row.classList.toggle('done', cb.checked);
         commit();
+        refreshLive();
       });
       row.append(cb);
     } else {
-      row.append(el('span', { class: 'bullet', text: kind === 'number' ? `${i + 1}.` : '•' }));
+      const mark = { number: `${i + 1}.`, step: String(i + 1) }[kind] || '•';
+      row.append(el('span', { class: 'bullet', text: mark }));
     }
 
     const input = field(item.text, 'List item', (v) => { item.text = v; commit(); });
@@ -331,14 +638,19 @@ function renderList(card, body, commit, rerender, kind) {
 /* ------------------------------------------------------------ card render */
 
 function renderCard(card) {
-  const node = el('div', { class: 'card', 'data-id': card.id });
+  const node = el('div', { class: 'card', 'data-id': card.id, 'data-live': TYPES[card.type].live ? '' : null });
   node.style.setProperty('--card-bg', `var(--c-${card.color || 'default'})`);
 
-  const paint = (focusIndex) => {
+  const draw = (focusIndex) => {
     node.innerHTML = '';
 
     const head = el('div', { class: 'card-head' }, [
       el('span', { class: 'card-grip', title: 'Drag', text: '⁙' }),
+      el('button', {
+        class: 'icon-btn sm card-fold', text: card.collapsed ? '▸' : '▾',
+        title: card.collapsed ? 'Expand' : 'Collapse', 'aria-expanded': String(!card.collapsed),
+        onclick: () => { card.collapsed = !card.collapsed; save(); paint(); },
+      }),
       el('input', {
         class: 'card-title',
         placeholder: TYPES[card.type].label,
@@ -351,10 +663,14 @@ function renderCard(card) {
       }),
     ]);
 
+    node.append(head);
+    // A collapsed card renders no body at all: autosize measures scrollHeight,
+    // which reads 0 for anything hidden, so hiding it would size it wrong.
     const body = el('div', { class: 'card-body' });
-    TYPES[card.type].render(card, body, save, paint);
-
-    node.append(head, body);
+    if (!card.collapsed) {
+      TYPES[card.type].render(card, body, save, paint);
+      node.append(body);
+    }
 
     if (board().layout === 'canvas') {
       const handle = el('div', { class: 'resize-handle', title: 'Resize' });
@@ -366,6 +682,17 @@ function renderCard(card) {
       const inputs = body.querySelectorAll('.list-row .field');
       if (inputs[focusIndex]) inputs[focusIndex].focus();
     }
+  };
+
+  // A repaint that changes the card's height (a fold, a link added or
+  // removed) moves whatever is stacked under it on the canvas by as much.
+  const paint = (focusIndex) => {
+    const before = node.isConnected ? node.offsetHeight : 0;
+    draw(focusIndex);
+    if (!before || board().layout !== 'canvas') return;
+    settleHeights(node);
+    shiftBelow(card, node.offsetHeight - before);
+    save();
   };
 
   paint();
@@ -542,6 +869,52 @@ function renderEmpty() {
   emptyEl.hidden = board().cards.length > 0 || !!state.calendarOpen;
 }
 
+/* Canvas cards do not reflow, so when one grows or shrinks (a fold, mostly)
+   everything stacked under it in the same lane moves by the same amount. */
+function shiftBelow(card, dh) {
+  if (!dh) return;
+  const nodeOf = (c) => boardEl.querySelector(`.card[data-id="${c.id}"]`);
+  const w = nodeOf(card).offsetWidth;
+  // Shrinking never lifts anything above the card's own new bottom edge.
+  const floor = (card.y ?? 40) + nodeOf(card).offsetHeight + 16;
+  board().cards.forEach((c) => {
+    const n = nodeOf(c);
+    if (c === card || !n || (c.y ?? 40) <= (card.y ?? 40)) return;
+    if ((c.x ?? 40) >= (card.x ?? 40) + w || (card.x ?? 40) >= (c.x ?? 40) + n.offsetWidth) return;
+    c.y = dh < 0 ? Math.max(floor, (c.y ?? 40) + dh) : (c.y ?? 40) + dh;
+    n.style.top = c.y + 'px';
+  });
+  applyZoom();
+}
+
+/* An imported canvas board knows which lane (zone) each card belongs in but
+   not how tall anything is, so its cards are stacked once, after the first
+   render, by their measured heights. */
+function packZones(b) {
+  const GAP = 16;
+  const lanes = [];
+  b.cards.forEach((c) => {
+    lanes[c.zone] ||= { w: 0, cards: [] };
+    lanes[c.zone].cards.push(c);
+    lanes[c.zone].w = Math.max(lanes[c.zone].w, c.w || 260);
+  });
+  let x = 40;
+  lanes.forEach((lane) => {
+    if (!lane) return;
+    let y = 40;
+    lane.cards.sort((p, q) => p.order - q.order).forEach((c) => {
+      const n = boardEl.querySelector(`.card[data-id="${c.id}"]`);
+      n.style.width = lane.w + 'px';  // measure at the width it will have
+      settleHeights(n);
+      c.x = x; c.y = y; c.w = lane.w;
+      y += n.offsetHeight + GAP;
+      delete c.zone;
+    });
+    x += lane.w + GAP * 2;
+  });
+  delete b.pack;
+}
+
 function render() {
   const b = board();
   boardEl.className = 'board ' + b.layout;
@@ -624,7 +997,79 @@ function render() {
 
   renderTabs();
   syncModeButtons();
+  renderLegend();
   applyZoom();
+}
+
+/* ----------------------------------------------------------------- legend
+   Fixed to the side: one row per colour on this board, which is also the
+   filter. The filter is deliberately not saved — one left on from yesterday
+   reads as cards gone missing. Labels are saved, in state.legend. */
+
+const legendEl = el('aside', { class: 'legend', 'aria-label': 'Colour legend', hidden: true });
+document.body.append(legendEl);
+const shown = new Set();  // colours let through; empty means all
+
+const legendLabel = (c) => state.legend?.[c] || window.SEED?.legend?.[c]
+  || (c === 'default' ? 'Uncoloured' : c[0].toUpperCase() + c.slice(1));
+
+function applyFilter() {
+  boardEl.querySelectorAll('.card').forEach((n) => {
+    const c = findCard(n.dataset.id);
+    n.classList.toggle('filtered-out', shown.size > 0 && !shown.has((c && c.color) || 'default'));
+  });
+}
+
+function renderLegend() {
+  const counts = {};
+  board().cards.forEach((c) => { counts[c.color || 'default'] = (counts[c.color || 'default'] || 0) + 1; });
+  shown.forEach((c) => { if (!counts[c]) shown.delete(c); });
+  // In the order the colours first appear on the board, so it reads like it.
+  const used = [...new Set([...board().cards].sort((x, y) => (x.order ?? 0) - (y.order ?? 0)).map((c) => c.color || 'default'))];
+
+  legendEl.innerHTML = '';
+  legendEl.hidden = !used.length || !!state.calendarOpen;
+  boardEl.classList.toggle('has-legend', !legendEl.hidden);
+  applyFilter();
+  if (legendEl.hidden) return;
+
+  const refilter = () => { renderLegend(); applyZoom(); };
+  legendEl.append(el('div', { class: 'legend-head' }, [
+    el('span', { text: 'Legend' }),
+    shown.size ? el('button', { class: 'legend-clear', text: 'Show all', onclick: () => { shown.clear(); refilter(); } }) : null,
+  ]));
+
+  used.forEach((c) => {
+    const label = el('span', { class: 'legend-label', text: legendLabel(c) });
+    const rename = () => {
+      const inp = el('input', { class: 'legend-input', value: legendLabel(c), 'aria-label': 'Label for ' + c });
+      const done = (keep) => {
+        if (keep) {
+          state.legend ||= {};
+          if (inp.value.trim()) state.legend[c] = inp.value.trim(); else delete state.legend[c];
+          save();
+        }
+        renderLegend();
+      };
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') inp.blur();
+        if (e.key === 'Escape') { inp.onblur = null; done(false); }
+      });
+      inp.onblur = () => done(true);
+      row.replaceChildren(inp);
+      inp.focus(); inp.select();
+    };
+    const sw = el('span', { class: 'legend-swatch' });
+    sw.style.background = `var(--c-${c})`;
+    const row = el('div', { class: 'legend-row' + (shown.size && !shown.has(c) ? ' off' : '') }, [
+      el('button', {
+        class: 'legend-item', 'aria-pressed': String(shown.has(c)), title: 'Show only this colour (click more to add)',
+        onclick: () => { shown.has(c) ? shown.delete(c) : shown.add(c); refilter(); },
+      }, [sw, label, el('span', { class: 'legend-count', text: String(counts[c]) })]),
+      el('button', { class: 'legend-edit', text: '✎', title: 'Rename', onclick: rename }),
+    ]);
+    legendEl.append(row);
+  });
 }
 
 /* Calendar is a tool, not a board layout — it lives on state, so opening it
@@ -1268,10 +1713,77 @@ if (state.pomodoro.running) state.pomodoro.running = false;
 // State saved before day entries existed has no store to read from.
 state.calendarDays ||= {};
 
+/* resources.js carries boards built from the notebook PDFs. Each pack is
+   added once and remembered in state.seeded so deleting a board does not
+   bring it back. A pack with reset: true replaces everything saved — boards,
+   calendar pictures, pomodoro, theme — rather than adding beside it. */
+if (window.SEED && !(state.seeded ||= []).includes(SEED.id)) {
+  if (SEED.reset) state = { ...defaultState(), seeded: [] };
+  // An untouched starter board is only a placeholder; drop it rather than
+  // leave an empty tab in front of the imported ones.
+  state.boards = state.boards.filter((b) => b.cards.length || b.name !== 'My board');
+  const added = SEED.boards.map((spec) => {
+    const b = blankBoard(spec.name);
+    b.layout = spec.layout || 'grid';
+    if (spec.columns) b.columns = spec.columns.map((name) => ({ id: uid(), name }));
+    if (spec.cards.some((c) => c.zone !== undefined)) b.pack = true;
+    b.cards = spec.cards.map((c, i) => ({
+      id: uid(),
+      type: c.type,
+      title: c.title || '',
+      color: c.color || 'default',
+      data: c.data,
+      collapsed: !!c.collapsed,
+      zone: c.zone,
+      x: 40 + (i % 4) * 300,
+      y: 40 + Math.floor(i / 4) * 340,
+      w: c.w || null,
+      order: i,
+      columnId: (b.columns.find((col) => col.name === c.col) || b.columns[0]).id,
+    }));
+    return b;
+  });
+  state.boards.push(...added);
+  state.activeBoard = added[0].id;
+  state.seeded.push(SEED.id);
+  // A fresh import already has every patch's content.
+  (SEED.patches || []).forEach((p) => state.seeded.push(p.id));
+  save();
+}
+
 applyTheme();
 pomoPaint();
 calPaint();
 render();
+if (board().pack && board().layout === 'canvas') { packZones(board()); save(); render(); }
+
+/* A pack is imported once, so a card changed in resources.js afterwards
+   reaches an existing board only through a patch: the card's items are
+   re-sent, any item added by hand is kept after them, and whatever was
+   stacked under it on the canvas moves by however much it grew. */
+for (const p of window.SEED?.patches || []) {
+  if (state.seeded.includes(p.id)) continue;
+  const fresh = SEED.boards.flatMap((b) => b.cards).find((c) => c.title === p.card);
+  const nodeOf = (c) => boardEl.querySelector(`.card[data-id="${c.id}"]`);
+  const hits = [];
+  state.boards.forEach((b) => b.cards.forEach((c) => {
+    if (!fresh || c.title !== p.card || c.type !== fresh.type) return;
+    const items = structuredClone(fresh.data.items);
+    // Known = anything the pack sends, nested ones included, by name or URL.
+    const known = new Set(items.flatMap((it) => [it, ...(it.children || [])]).flatMap((it) => [it.name, it.url]).filter(Boolean));
+    c.data.items = [...items, ...c.data.items.filter((it) => !known.has(it.name) && !known.has(it.url))];
+    hits.push([c, nodeOf(c)?.offsetHeight]);
+  }));
+  state.seeded.push(p.id);
+  save();
+  if (!hits.length) continue;
+  render();
+  hits.forEach(([c, before]) => {
+    const n = nodeOf(c);
+    if (before && n && board().layout === 'canvas') { settleHeights(n); shiftBelow(c, n.offsetHeight - before); }
+  });
+  save();
+}
 
 /* Manifest shortcuts land here as query params (see manifest.webmanifest).
    The URL is scrubbed once handled, so a reload of an installed window does
