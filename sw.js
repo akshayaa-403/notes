@@ -10,7 +10,7 @@
    which avoids the half-old-half-new state that per-file expiry invites.
    ========================================================================= */
 
-const CACHE = 'notes-shell-v13';
+const CACHE = 'notes-shell-v21';
 
 /* Relative, not root-absolute: in a service worker these resolve against the
    worker's own URL, so the app works unchanged whether it is served from a
@@ -20,6 +20,34 @@ const SHELL = [
   './index.html',
   './style.css',
   './app.js',
+  './boot.js',
+  './books.js',
+  // The reader's vendored pdf.js and the Roboto it is set in, so books
+  // open offline too. Licences and VERSION notes are not needed at run time.
+  './vendor/fonts/roboto/roboto-latin-400-italic.woff2',
+  './vendor/fonts/roboto/roboto-latin-400-normal.woff2',
+  './vendor/fonts/roboto/roboto-latin-500-normal.woff2',
+  './vendor/fonts/roboto/roboto-latin-700-normal.woff2',
+  './vendor/pdfjs/iccs/CGATS001Compat-v2-micro.icc',
+  './vendor/pdfjs/pdf.min.mjs',
+  './vendor/pdfjs/pdf.worker.min.mjs',
+  './vendor/pdfjs/standard_fonts/FoxitDingbats.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitFixed.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitFixedBold.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitFixedBoldItalic.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitFixedItalic.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitSerif.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitSerifBold.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitSerifBoldItalic.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitSerifItalic.pfb',
+  './vendor/pdfjs/standard_fonts/FoxitSymbol.pfb',
+  './vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf',
+  './vendor/pdfjs/standard_fonts/LiberationSans-BoldItalic.ttf',
+  './vendor/pdfjs/standard_fonts/LiberationSans-Italic.ttf',
+  './vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf',
+  './vendor/pdfjs/wasm/jbig2.wasm',
+  './vendor/pdfjs/wasm/openjpeg.wasm',
+  './vendor/pdfjs/wasm/qcms_bg.wasm',
   './resources.js',
   './pwa.js',
   './manifest.webmanifest',
@@ -39,7 +67,11 @@ self.addEventListener('install', (e) => {
   // No skipWaiting here on purpose: swapping the worker under a tab that is
   // mid-edit would serve it a new shell against old in-memory state. The page
   // asks for the swap instead, once the user accepts the update prompt.
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  // cache: 'reload' goes past the browser's HTTP cache. A plain static server
+  // (python -m http.server) sends no Cache-Control, so the browser guesses
+  // files are fresh for hours — and without this a new worker could precache
+  // last version's app.js beside this version's index.html.
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))));
 });
 
 self.addEventListener('activate', (e) => {

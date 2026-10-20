@@ -8,6 +8,12 @@
 <meta name="description" content="Boards, cards and a picture calendar. Everything stays on your device and works offline.">
 <title>Notes</title>
 
+<!-- Only this app's own files may run. Scripts and workers come from here
+     alone (pdf.js included — it is vendored), wasm may compile for pdf.js's
+     image decoders, nothing may be framed or posted anywhere, and the one
+     outside request the app makes is for link-card favicons. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://www.google.com https://*.gstatic.com; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+
 <!-- installable app -->
 <link rel="manifest" href="manifest.webmanifest">
 <!-- One tag, not a light/dark pair: the theme is the app's own toggle, so
@@ -27,14 +33,8 @@
 
 <link rel="stylesheet" href="style.css">
 
-<!-- Theme before first paint. app.js runs at the end of the body, so without
-     this a dark-theme user gets a white flash on every launch. -->
-<script>
-try {
-  var s = JSON.parse(localStorage.getItem('notes.dashboard.v1'));
-  if (s && s.theme) document.documentElement.dataset.theme = s.theme;
-} catch (e) {}
-</script>
+<!-- Theme before first paint (see boot.js). -->
+<script src="boot.js"></script>
 </head>
 <body>
 
@@ -57,6 +57,7 @@ try {
       <div class="segmented">
         <button id="calendarBtn" aria-pressed="false" title="Picture calendar">Calendar</button>
         <button id="pomodoroBtn" aria-pressed="false" title="Pomodoro timer">Pomodoro</button>
+        <button id="booksBtn" aria-pressed="false" title="Bookshelf">Books</button>
       </div>
     </div>
 
@@ -116,6 +117,7 @@ try {
 </section>
 
 <script src="resources.js"></script>
+<script src="books.js"></script>
 <script src="app.js"></script>
 <script src="pwa.js"></script>
 </body>

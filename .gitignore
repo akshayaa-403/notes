@@ -1,3 +1,6 @@
 .DS_Store
 *.local
 .claude/
+books/
+# Books for the PDF reader stay on this machine only.
+*.pdf
