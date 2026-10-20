@@ -1,0 +1,6 @@
+pdfjs-dist 6.4.299 (Apache-2.0), from https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.4.299.tgz
+npm integrity sha512-AVl138zALtfaAPvADulE0PZThbYzCBS79nL4pOSL/6Sm/4AH5A21BD9VHt97OlCuzJuCpmeZtAtkinisF4Vb1g==
+Verified against the registry before copying (2026-10-21). Files are unmodified copies of the package's.
+Left out on purpose: quickjs-eval (runs JavaScript embedded in PDFs), the no-wasm
+fallbacks (wasm is allowed by the CSP), cmaps (CJK text) and the viewer UI.
+To upgrade: fetch the new tarball, check its integrity, replace these files, bump CACHE in sw.js.

@@ -82,6 +82,41 @@ const svgEl = (tag, attrs = {}, text) => {
   return n;
 };
 
+/* A small Markdown subset: # headings, paragraphs, > quotes, - and 1. lists,
+   --- rules, **bold**, *italic*, `code`, [links](url) and bare URLs. The
+   source is escaped first, so nothing typed can become live HTML. */
+const mdEsc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const mdInline = (t) => mdEsc(t)
+  .replace(/`([^`]+)`/g, '<code>$1</code>')
+  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  .replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<em>$2</em>')
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  .replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+
+function md(src) {
+  const out = [];
+  let list = null, para = [];
+  const flush = () => {
+    if (para.length) out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
+    if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li>${mdInline(i)}</li>`).join('')}</${list.tag}>`);
+    para = []; list = null;
+  };
+  for (const line of src.split('\n')) {
+    let m;
+    if (!line.trim()) flush();
+    else if ((m = line.match(/^(#{1,4})\s+(.*)/))) { flush(); out.push(`<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`); }
+    else if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { flush(); out.push('<hr>'); }
+    else if ((m = line.match(/^>\s?(.*)/))) { flush(); out.push(`<blockquote>${mdInline(m[1])}</blockquote>`); }
+    else if ((m = line.match(/^\s*(?:([-*])|\d+\.)\s+(.*)/))) {
+      const tag = m[1] ? 'ul' : 'ol';
+      if (para.length || (list && list.tag !== tag)) flush();
+      (list ||= { tag, items: [] }).items.push(m[2]);
+    } else { if (list) flush(); para.push(line); }
+  }
+  flush();
+  return out.join('');
+}
+
 /* ------------------------------------------------------------------ state */
 
 const blankBoard = (name) => ({
@@ -138,6 +173,26 @@ const TYPES = {
     empty: () => ({ body: '' }),
     render(card, body, commit) {
       body.append(field(card.data.body, 'Start writing…', (v) => { card.data.body = v; commit(); }, 'field text-body'));
+    },
+  },
+
+  // Reads as rendered Markdown; a double-click (or Edit) swaps in the source.
+  markdown: {
+    label: 'Markdown',
+    glyph: 'M↓',
+    empty: () => ({ body: '' }),
+    render(card, body, commit, rerender) {
+      if (card.editing || !card.data.body) {
+        const ta = field(card.data.body, '# Write Markdown…', (v) => { card.data.body = v; commit(); }, 'field text-body md-source');
+        const done = () => { delete card.editing; commit(); rerender(); };
+        body.append(ta, el('button', { class: 'add-row', text: 'Done', onclick: done }));
+        if (card.editing) requestAnimationFrame(() => ta.focus());
+      } else {
+        body.append(
+          el('div', { class: 'md', html: md(card.data.body), ondblclick: () => { card.editing = true; rerender(); } }),
+          el('button', { class: 'add-row', text: 'Edit', onclick: () => { card.editing = true; rerender(); } }),
+        );
+      }
     },
   },
 
@@ -426,6 +481,15 @@ const TYPES = {
     },
   },
 
+  // The books on the shelf (books.js); live, so it repaints as books arrive.
+  shelf: {
+    label: 'Bookshelf',
+    glyph: '📚',
+    live: true,
+    empty: () => ({}),
+    render(card, body) { window.Books.renderCard(body); },
+  },
+
   quote: {
     label: 'Quote',
     glyph: '❝',
@@ -645,7 +709,8 @@ function renderCard(card) {
     node.innerHTML = '';
 
     const head = el('div', { class: 'card-head' }, [
-      el('span', { class: 'card-grip', title: 'Drag', text: '⁙' }),
+      card.locked ? el('span', { class: 'card-grip locked', title: 'Fixed in place', text: '⌖' })
+        : el('span', { class: 'card-grip', title: 'Drag', text: '⁙' }),
       el('button', {
         class: 'icon-btn sm card-fold', text: card.collapsed ? '▸' : '▾',
         title: card.collapsed ? 'Expand' : 'Collapse', 'aria-expanded': String(!card.collapsed),
@@ -672,7 +737,9 @@ function renderCard(card) {
       node.append(body);
     }
 
-    if (board().layout === 'canvas') {
+    if (card.pinned && board().layout === 'canvas') node.append(pinButton(card));
+
+    if (board().layout === 'canvas' && !card.locked) {
       const handle = el('div', { class: 'resize-handle', title: 'Resize' });
       handle.addEventListener('pointerdown', (e) => startResize(e, card, node));
       node.append(handle);
@@ -733,6 +800,17 @@ function openCardMenu(card, anchor) {
     menu.append(el('hr'));
   }
 
+  if (board().layout === 'canvas') {
+    menu.append(el('button', {
+      onclick: () => { card.pinned = !card.pinned; closeMenu(); save(); render(); },
+    }, [el('span', { class: 'glyph', text: '📌' }), el('span', { text: card.pinned ? 'Remove pin' : 'Add pin' })]));
+    const tied = (board().threads || []).filter((t) => t.a === card.id || t.b === card.id);
+    if (tied.length) menu.append(el('button', {
+      onclick: () => { board().threads = board().threads.filter((t) => !tied.includes(t)); closeMenu(); save(); drawThreads(); },
+    }, [el('span', { class: 'glyph', text: '✂' }), el('span', { text: `Cut ${tied.length} thread${tied.length > 1 ? 's' : ''}` })]));
+    menu.append(el('hr'));
+  }
+
   menu.append(el('button', {
     onclick: () => {
       const b = board();
@@ -766,7 +844,7 @@ let dragCard = null;
 function attachDrag(node, card) {
   // Canvas mode: free positioning via pointer events.
   node.addEventListener('pointerdown', (e) => {
-    if (board().layout !== 'canvas') return;
+    if (board().layout !== 'canvas' || card.locked) return;
     if (!e.target.closest('.card-grip')) return;
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
@@ -781,6 +859,7 @@ function attachDrag(node, card) {
       card.y = Math.max(0, origY + (ev.clientY - startY) / z);
       node.style.left = card.x + 'px';
       node.style.top = card.y + 'px';
+      drawThreads();
     };
     const up = () => {
       node.style.zIndex = '';
@@ -849,6 +928,7 @@ function startResize(e, card, node) {
     // offsetWidth is the pre-transform width, so only the delta needs scaling.
     card.w = Math.max(180, origW + (ev.clientX - startX) / zoomFactor());
     node.style.width = card.w + 'px';
+    drawThreads();
   };
   const up = () => {
     window.removeEventListener('pointermove', move);
@@ -915,6 +995,146 @@ function packZones(b) {
   delete b.pack;
 }
 
+/* The same once-only pass for a board laid out in rows (a pinboard). A card's
+   `side` puts its row in the left, centre or right stack; each stack is its
+   rows piled by measured height and centred vertically on the tallest, and
+   the two side stacks are given the same width, so a card alone in the
+   centre stack sits in the middle of the board both ways. Left rows lean in
+   toward the centre, right rows start from it. The gap above every row
+   leaves room for the threads that arch over it. */
+function packRows(b) {
+  const GAP = 40, ROW_GAP = 80;
+  const stacks = { l: [], c: [], r: [] };
+  const h = new Map();
+  b.cards.forEach((c) => {
+    (stacks[c.side || 'c'][c.row] ||= []).push(c);
+    const n = boardEl.querySelector(`.card[data-id="${c.id}"]`);
+    c.w ||= 260;
+    n.style.width = c.w + 'px';  // measure at the width it will have
+    settleHeights(n);
+    h.set(c, n.offsetHeight);
+  });
+  const rowW = (r) => r.reduce((sum, c) => sum + c.w, 0) + GAP * (r.length - 1);
+  const rowH = (r) => Math.max(...r.map((c) => h.get(c)));
+  const wide = (k) => Math.max(0, ...stacks[k].filter(Boolean).map(rowW));
+  const tall = (k) => stacks[k].filter(Boolean).reduce((sum, r) => sum + ROW_GAP + rowH(r), 0);
+  const side = Math.max(wide('l'), wide('r'));
+  const left = { l: 40, c: 40 + (side && side + GAP * 2) };
+  left.r = left.c + wide('c') + GAP * 2;
+  const tallest = Math.max(tall('l'), tall('c'), tall('r'));
+
+  Object.entries(stacks).forEach(([k, rows]) => {
+    let y = 40 + (tallest - tall(k)) / 2;
+    rows.filter(Boolean).forEach((r) => {
+      y += ROW_GAP;
+      let x = k === 'l' ? left.l + side - rowW(r) : k === 'r' ? left.r : left.c + (wide('c') - rowW(r)) / 2;
+      r.sort((p, q) => p.order - q.order).forEach((c) => {
+        c.x = x; c.y = y;
+        x += c.w + GAP;
+        delete c.row; delete c.side;
+      });
+      y += rowH(r);
+    });
+  });
+  delete b.pack;
+}
+
+/* ------------------------------------------------------------- pinboard */
+
+/* A card with `pinned` wears a pin on its top edge, and board.threads ties
+   pins together. Threads are drawn in an SVG under the cards and arch upward,
+   away from the text below each pin, so however cards are moved a thread can
+   pass behind a card but never across its words. Drag from one pin to
+   another (or press one, then the other) to tie a thread; click a thread to
+   cut it. */
+
+const pinAt = (n) => ({ x: n.offsetLeft + n.offsetWidth / 2, y: n.offsetTop });
+const threadPath = (a, b) => {
+  const lift = Math.min(56, 14 + Math.hypot(b.x - a.x, b.y - a.y) * 0.12);
+  return `M${a.x},${a.y} Q${(a.x + b.x) / 2},${Math.min(a.y, b.y) - lift} ${b.x},${b.y}`;
+};
+let armedPin = null;  // the card whose pin was pressed first
+
+function threadLayer() {
+  const plane = boardEl.querySelector('.canvas-plane');
+  if (!plane) return null;
+  return plane.querySelector('.threads') || plane.insertBefore(svgEl('svg', { class: 'threads' }), plane.firstChild);
+}
+
+function drawThreads() {
+  const svg = threadLayer();
+  if (!svg) return;
+  const b = board();
+  const nodeOf = (id) => boardEl.querySelector(`.card[data-id="${id}"]`);
+  // A deleted card takes its threads with it.
+  b.threads = (b.threads || []).filter((t) => findCard(t.a) && findCard(t.b));
+  svg.querySelectorAll('.thread').forEach((g) => g.remove());
+  b.threads.forEach((t) => {
+    const na = nodeOf(t.a), nb = nodeOf(t.b);
+    if (!na || !nb) return;
+    const d = threadPath(pinAt(na), pinAt(nb));
+    const hit = svgEl('path', { d, class: 'thread-hit' });
+    hit.addEventListener('click', () => { b.threads = b.threads.filter((x) => x !== t); save(); drawThreads(); });
+    const g = svgEl('g', { class: 'thread' });
+    g.append(svgEl('title', {}, 'Click to cut this thread'), hit, svgEl('path', { d, class: 'thread-line' }));
+    svg.append(g);
+  });
+}
+
+function tie(a, b) {
+  const bd = board();
+  bd.threads ||= [];
+  if (a === b || bd.threads.some((t) => (t.a === a && t.b === b) || (t.a === b && t.b === a))) return;
+  bd.threads.push({ a, b });
+  save(); drawThreads();
+}
+
+function pinButton(card) {
+  const pin = el('button', {
+    class: 'pin' + (armedPin === card.id ? ' armed' : ''),
+    title: 'Drag to another pin to tie a thread',
+    'aria-label': `Pin: press, then press another pin to tie a thread`,
+  });
+  let dragged = false;
+
+  pin.addEventListener('click', () => {
+    if (dragged) { dragged = false; return; }
+    if (armedPin && armedPin !== card.id) { tie(armedPin, card.id); armedPin = null; }
+    else armedPin = armedPin === card.id ? null : card.id;
+    boardEl.querySelectorAll('.pin').forEach((p) => p.classList.toggle('armed', p.closest('.card').dataset.id === armedPin));
+  });
+
+  pin.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    dragged = false;
+    const svg = threadLayer();
+    const from = pinAt(pin.closest('.card'));
+    const sx = e.clientX, sy = e.clientY;
+    const live = svgEl('path', { class: 'thread-line drafting' });
+    svg.append(live);
+    const toPlane = (ev) => {
+      const r = boardEl.querySelector('.canvas-plane').getBoundingClientRect(), z = zoomFactor();
+      return { x: (ev.clientX - r.left) / z, y: (ev.clientY - r.top) / z };
+    };
+    const move = (ev) => {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 4) dragged = true;
+      if (dragged) live.setAttribute('d', threadPath(from, toPlane(ev)));
+    };
+    const up = (ev) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      live.remove();
+      if (!dragged) return;
+      // Dropping anywhere on a pinned card counts, not only on its pin.
+      const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.card');
+      if (target && target.dataset.id !== card.id && findCard(target.dataset.id)?.pinned) tie(card.id, target.dataset.id);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  return pin;
+}
+
 function render() {
   const b = board();
   boardEl.className = 'board ' + b.layout;
@@ -933,6 +1153,14 @@ function render() {
       plane.append(node);
     });
     boardEl.append(plane);
+    // A freshly imported board is packed the first time it is shown — not
+    // only at boot, so a second board imported alongside gets packed too.
+    // Never while the calendar hides the board: hidden cards measure 0.
+    if (b.pack && !state.calendarOpen) {
+      (b.cards.some((c) => c.row !== undefined) ? packRows : packZones)(b);
+      save();
+      return render();
+    }
 
   } else if (b.layout === 'grid') {
     const plane = el('div', { class: 'grid-plane zoom-plane' });
@@ -1010,7 +1238,9 @@ const legendEl = el('aside', { class: 'legend', 'aria-label': 'Colour legend', h
 document.body.append(legendEl);
 const shown = new Set();  // colours let through; empty means all
 
-const legendLabel = (c) => state.legend?.[c] || window.SEED?.legend?.[c]
+// A board's own labels first; state.legend holds renames from before boards
+// had their own, and SEED.legend is the Notebook pack's.
+const legendLabel = (c) => board().legend?.[c] || state.legend?.[c] || window.SEED?.legend?.[c]
   || (c === 'default' ? 'Uncoloured' : c[0].toUpperCase() + c.slice(1));
 
 function applyFilter() {
@@ -1045,8 +1275,8 @@ function renderLegend() {
       const inp = el('input', { class: 'legend-input', value: legendLabel(c), 'aria-label': 'Label for ' + c });
       const done = (keep) => {
         if (keep) {
-          state.legend ||= {};
-          if (inp.value.trim()) state.legend[c] = inp.value.trim(); else delete state.legend[c];
+          const own = (board().legend ||= {});
+          if (inp.value.trim()) own[c] = inp.value.trim(); else delete own[c];
           save();
         }
         renderLegend();
@@ -1255,6 +1485,7 @@ function applyZoom() {
       : 1);
     // Never smaller than a screenful, so there is always somewhere to drag to.
     setPlane(plane, z, box, ext.right + pad, ext.bottom + pad);
+    drawThreads();
 
   } else if (b.zoom) {
     setPlane(plane, b.zoom, box);
@@ -1722,27 +1953,7 @@ if (window.SEED && !(state.seeded ||= []).includes(SEED.id)) {
   // An untouched starter board is only a placeholder; drop it rather than
   // leave an empty tab in front of the imported ones.
   state.boards = state.boards.filter((b) => b.cards.length || b.name !== 'My board');
-  const added = SEED.boards.map((spec) => {
-    const b = blankBoard(spec.name);
-    b.layout = spec.layout || 'grid';
-    if (spec.columns) b.columns = spec.columns.map((name) => ({ id: uid(), name }));
-    if (spec.cards.some((c) => c.zone !== undefined)) b.pack = true;
-    b.cards = spec.cards.map((c, i) => ({
-      id: uid(),
-      type: c.type,
-      title: c.title || '',
-      color: c.color || 'default',
-      data: c.data,
-      collapsed: !!c.collapsed,
-      zone: c.zone,
-      x: 40 + (i % 4) * 300,
-      y: 40 + Math.floor(i / 4) * 340,
-      w: c.w || null,
-      order: i,
-      columnId: (b.columns.find((col) => col.name === c.col) || b.columns[0]).id,
-    }));
-    return b;
-  });
+  const added = SEED.boards.map(seedBoard);
   state.boards.push(...added);
   state.activeBoard = added[0].id;
   state.seeded.push(SEED.id);
@@ -1751,11 +1962,52 @@ if (window.SEED && !(state.seeded ||= []).includes(SEED.id)) {
   save();
 }
 
+/* A board added to the pack later arrives through SEED.additions, each once by
+   its own id, beside whatever is already saved — no reset, no re-import.
+   Bumping an addition's id re-sends it, replacing the board of that name. */
+for (const a of window.SEED?.additions || []) {
+  if (state.seeded.includes(a.id)) continue;
+  state.boards = state.boards.filter((x) => x.name !== a.board.name);
+  const b = seedBoard(a.board);
+  state.boards.push(b);
+  state.activeBoard = b.id;
+  state.seeded.push(a.id);
+  save();
+}
+
+function seedBoard(spec) {
+  const b = blankBoard(spec.name);
+  b.layout = spec.layout || 'grid';
+  if (spec.columns) b.columns = spec.columns.map((name) => ({ id: uid(), name }));
+  if (spec.cards.some((c) => c.zone !== undefined || c.row !== undefined)) b.pack = true;
+  if (spec.legend) b.legend = { ...spec.legend };
+  b.cards = spec.cards.map((c, i) => ({
+    id: uid(),
+    type: c.type,
+    title: c.title || '',
+    color: c.color || 'default',
+    data: c.data,
+    collapsed: !!c.collapsed,
+    locked: !!c.locked,
+    pinned: !!c.pinned,
+    zone: c.zone,
+    row: c.row,
+    side: c.side,
+    x: 40 + (i % 4) * 300,
+    y: 40 + Math.floor(i / 4) * 340,
+    w: c.w || null,
+    order: i,
+    columnId: (b.columns.find((col) => col.name === c.col) || b.columns[0]).id,
+  }));
+  // Threads are written as pairs of card indexes; ids only exist from here.
+  b.threads = (spec.threads || []).map(([i, j]) => ({ a: b.cards[i].id, b: b.cards[j].id }));
+  return b;
+}
+
 applyTheme();
 pomoPaint();
 calPaint();
 render();
-if (board().pack && board().layout === 'canvas') { packZones(board()); save(); render(); }
 
 /* A pack is imported once, so a card changed in resources.js afterwards
    reaches an existing board only through a patch: the card's items are

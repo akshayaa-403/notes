@@ -248,6 +248,93 @@ window.SEED = (() => {
       note),
   ];
 
+  const DOUBT = `# When Doubt Creates the Product
+
+*How the tobacco industry taught industries to stop selling truth and start selling uncertainty*
+
+I was going to buy myself a lemon soda when one of my friends stopped me and said, “You know soda is bad for you, right?” Another friend replied, “It doesn’t matter. Just eat whatever. We are all going to die anyway.” Caught in a dilemma, I had to make a choice. I had two diametrically opposing views. One was overly conscious of consumption, and the other was thoroughly desensitized until they settled on ignorance. At first, it felt like a casual exchange, the kind of philosophical shrug that happens around any table. But the more I sat with it, the more I realized that this wasn’t just two people talking past each other. It was a script. A learned helplessness dressed up as wisdom. And somewhere in the back of my mind, I knew I had seen this dynamic before. One that you cannot find in a textbook, but in the quiet, deliberate architecture of an industry that discovered, decades ago, that the most profitable product it could ever sell wasn’t an addiction like sugar or coffee. It was doubt and uncertainty.
+
+Consumers these days buy based on emotions, not logic. Panic? Buy mid-tier luxury items that will depreciate the second they’re bought. Fear of the future? Buy insurance. You can pay the bank for the chance to get your own money back if you get sick or injured, but strictly according to their contract. Which you probably won’t fall into, given how locked those contracts are. These emotions lead consumers to buy. That’s what marketing and ad agencies count on. But why do only these negative feelings get capitalized on? For that, we go back to Hill & Knowlton’s 1954 tobacco manifesto.
+
+## Hill and Knowlton Playbook for Tobacco
+
+Hill and Knowlton has long been a renowned advertising agency. On 4th January 1954, they introduced the Frank Statement
+
+> [Caveat paragraph after explaining the process on how in modern day several companies use the same playbook to cast doubt]
+
+## Lack of consensus
+
+Intent -> system -> process -> result
+
+## GLP-1 drugs
+
+## HPV Vaccination
+
+## Climate Change
+
+## Breaking Doubt with Options
+
+> [Agnotology + Epistemological analysis]
+
+## Sources bank
+
+- Search “which company has contract from the indian government for hpv vaccines for teen girls”`;
+
+  /* A pinboard: the draft locked alone in the centre, the sources pinned in
+     rows by theme in stacks either side of it, each row tied into a chain of
+     threads. app.js packs the rows once by measured height (packRows). */
+  const SOURCES = [
+
+    ['How tobacco companies created the disinformation playbook — UCS', 'https://blog.ucs.org/anita-desikan/how-tobacco-companies-created-the-disinformation-playbook/'],
+    ['Gas stoves & tobacco’s PR playbook — Resilience', 'https://www.resilience.org/stories/2023-11-06/when-science-showed-in-the-1970s-that-gas-stoves-produced-harmful-indoor-air-pollution-the-industry-reached-for-tobaccos-pr-playbook/'],
+    ['Tobacco industry playbook — Wikipedia', 'https://en.wikipedia.org/wiki/Tobacco_industry_playbook'],
+    ['When the natural gas industry used the playbook — r/climate', 'https://www.reddit.com/r/climate/comments/17p4wmf/when_the_natural_gas_industry_used_the_playbook/'],
+    ['Staying hopeful in a cynical time — Robert Reich', 'https://robertreich.substack.com/p/staying-hopeful-in-a-cynical-time'],
+    ['How tobacco companies created the… — Scilight', 'https://scilight.substack.com/p/how-tobacco-companies-created-the'],
+    ['Climate change is the new tobacco — Policy and the Markets', 'https://policyandthemarkets.substack.com/p/climate-change-is-the-new-tobacco'],
+    ['HPV vaccine trials and sleeping watchdogs — IJME', 'https://issuesinmedicalethics.org/articles/hpv-vaccine-trials-and-sleeping-watchdogs/?galley=print'],
+    ['Agnotology: the study of ignorance — Medium', 'https://medium.com/@porlando_84392/agnotology-the-study-of-ignorance-351ba8ae432d'],
+    ['Centre warns pharma against weight-loss drug ads — TOI', 'https://timesofindia.indiatimes.com/business/india-business/centre-warns-pharma-companies-against-promoting-weight-loss-drugs-among-public-through-ads/amp_articleshow/129478681.cms'],
+    ['The Playbook — PMC', 'https://pmc.ncbi.nlm.nih.gov/articles/PMC2879177/#:~:text=The%20Playbook&text=Devised%20in%20the%201950s%20and,forwards%2C%20no%20deviation%20was%20allowed.'],
+    ['Factsheet 0268 — Tobacco-Free Kids (PDF)', 'https://assets.tobaccofreekids.org/factsheets/0268.pdf'],
+    ['Gen Z walks into a bar and orders water — TOI', 'https://timesofindia.indiatimes.com/toi-plus/lifestyle/gen-z-walks-into-a-barand-orders-water/articleshow/130336234.cms'],
+    ['Countercurrents — masters081209', 'https://www.countercurrents.org/masters081209.htm'],
+    ['Agnotology — Wikipedia', 'https://en.wikipedia.org/wiki/Agnotology'],
+    ['The tobacco industry and its tactics — Law Explores', 'https://lawexplores.com/the-tobacco-industry-and-its-tactics/'],
+  ];
+  // [row, colour] per source, in SOURCES order. Row 3 is the draft's, alone in
+  // the centre; rows 0-2 stack to its left, 4-6 to its right, three a side so
+  // the draft lands in the middle of the board.
+  const SIDE = ['l', 'l', 'l', 'c', 'r', 'r', 'r'];
+  const THEME = [
+    [0, 'orange'], [4, 'green'], [1, 'orange'], [4, 'green'], [6, 'purple'], [0, 'orange'],
+    [4, 'green'], [5, 'blue'], [6, 'purple'], [5, 'blue'], [1, 'orange'], [2, 'brown'],
+    [5, 'blue'], [2, 'brown'], [6, 'purple'], [2, 'brown'],
+  ];
+  const doubtCards = [
+    { type: 'markdown', title: 'Draft', data: { body: DOUBT }, row: 3, side: 'c', w: 640, locked: true },
+    ...SOURCES.map(([name, url], i) => ({
+      type: 'link', title: '', data: { name, url }, row: THEME[i][0], side: SIDE[THEME[i][0]], color: THEME[i][1], w: 240, pinned: true,
+    })),
+  ];
+  // Each row's cards, in order, tied one to the next.
+  const threads = [];
+  doubtCards.forEach((c, i) => {
+    const prev = doubtCards.slice(1, i).filter((d) => d.row === c.row).pop();
+    if (c.pinned && prev) threads.push([doubtCards.indexOf(prev), i]);
+  });
+  const DOUBT_BOARD = {
+    name: 'When Doubt Creates the Product', layout: 'canvas', cards: doubtCards, threads,
+    legend: {
+      default: 'Draft',
+      orange: 'Tobacco playbook',
+      brown: 'Tobacco tactics',
+      green: 'Gas & climate',
+      blue: 'Health & consumers',
+      purple: 'Agnotology & hope',
+    },
+  };
+
   return {
     id: 'notebook-4',
     reset: true,
@@ -266,5 +353,12 @@ window.SEED = (() => {
       yellow: 'Notes & advice',
     },
     boards: [{ name: 'Notebook', layout: 'canvas', cards }],
+    // Boards added after the pack, each imported once by id (see app.js).
+    additions: [
+      { id: 'doubt-draft-6', board: DOUBT_BOARD },
+      // Puts the Notebook back exactly as committed (6f2d4b6), replacing
+      // whatever copy of it the browser holds. Asked for on 2026-10-21.
+      { id: 'notebook-restore-1', board: { name: 'Notebook', layout: 'canvas', cards } },
+    ],
   };
 })();
