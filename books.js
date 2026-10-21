@@ -34,6 +34,9 @@ window.Books = (() => {
 
   const lib = () => (state.books ||= {});
   const prefs = () => (state.reader ||= { spread: true, muted: false, side: true, tab: 'contents' });
+  // Zoom is a factor on the fitted size: 1 is "the whole spread on screen".
+  const ZOOMS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+  const zoom = () => prefs().zoom || 1;
   const keyOf = (name, size) => `${name}|${size}`;
 
   /* "Blue Sisters-Coco Mellors-2024.pdf" → title, author, year. Anything
@@ -440,12 +443,15 @@ window.Books = (() => {
         const page = await R.pdf.getPage(n);
         const base = page.getViewport({ scale: 1 });
         const scale = Math.min(R.pw / base.width, R.ph / base.height);
-        const vp = page.getViewport({ scale: scale * dpr() });
+        // Very large zooms would make canvases the browser refuses to draw;
+        // above ~16 megapixels the page is drawn a little softer instead.
+        const density = Math.min(dpr(), Math.sqrt(16e6 / (base.width * base.height * scale * scale)));
+        const vp = page.getViewport({ scale: scale * density });
         const canvas = document.createElement('canvas');
         canvas.width = Math.floor(vp.width);
         canvas.height = Math.floor(vp.height);
         await page.render({ canvas, viewport: vp }).promise;
-        return { gen, page, scale, canvas, w: vp.width / dpr(), h: vp.height / dpr() };
+        return { gen, page, scale, canvas, w: vp.width / density, h: vp.height / density };
       })());
       // Keep the pages around the reader; let the far ones go.
       if (R.cache.size > 24) {
@@ -522,15 +528,16 @@ window.Books = (() => {
   // Lay the book out for the stage: the largest pages that fit, keeping the
   // first page's proportions, with room at the sides to grab the edges.
   async function layout() {
-    const stage = R.dom.stage.getBoundingClientRect();
+    const stage = R.dom.stage;
     const first = (await R.pdf.getPage(1)).getViewport({ scale: 1 });
     const aspect = first.width / first.height;
     const cols = spread() ? 2 : 1;
-    const availW = stage.width - 120;
-    const availH = stage.height - 72;
+    // The fit leaves room at the sides for the edges you grab.
+    const availW = stage.clientWidth - 140;
+    const availH = stage.clientHeight - 72;
     let ph = availH, pw = ph * aspect;
     if (pw * cols > availW) { pw = availW / cols; ph = pw / aspect; }
-    const size = [Math.floor(pw), Math.floor(ph)];
+    const size = [Math.floor(pw * zoom()), Math.floor(ph * zoom())];
     if (size[0] !== R.pw || size[1] !== R.ph) {
       [R.pw, R.ph] = size;
       R.gen++;
@@ -539,7 +546,40 @@ window.Books = (() => {
     R.dom.book.style.setProperty('--pw', R.pw + 'px');
     R.dom.book.style.setProperty('--ph', R.ph + 'px');
     R.dom.book.classList.toggle('single', !spread());
+    R.dom.zoomLevel.textContent = Math.round(zoom() * 100) + '%';
+    R.dom.zoomOut.disabled = zoom() <= ZOOMS[0];
+    R.dom.zoomIn.disabled = zoom() >= ZOOMS[ZOOMS.length - 1];
   }
+
+  /* Zooming keeps the point under the pointer (or the middle of the view)
+     where it was, and redraws the pages at the new size so the type stays
+     sharp rather than being stretched. */
+  async function setZoom(z, at) {
+    if (!R || R.turn) return;
+    z = clamp(z, ZOOMS[0], ZOOMS[ZOOMS.length - 1]);
+    if (z === zoom()) return;
+    const { stage, book } = R.dom;
+    const sr = stage.getBoundingClientRect();
+    const x = at?.x ?? sr.left + sr.width / 2, y = at?.y ?? sr.top + sr.height / 2;
+    const b0 = book.getBoundingClientRect();
+    const fx = (x - b0.left) / b0.width, fy = (y - b0.top) / b0.height;
+    prefs().zoom = z;
+    save();
+    await layout();
+    paint();
+    const b1 = book.getBoundingClientRect();
+    stage.scrollLeft += b1.left + fx * b1.width - x;
+    stage.scrollTop += b1.top + fy * b1.height - y;
+  }
+  const stepZoom = (dir, at) => {
+    const z = zoom();
+    setZoom(dir > 0 ? ZOOMS.find((s) => s > z + 0.001) ?? z : [...ZOOMS].reverse().find((s) => s < z - 0.001) ?? z, at);
+  };
+  // Bigger than the stage: the wheel scrolls the page instead of turning it.
+  const overflowing = () => {
+    const s = R.dom.stage;
+    return s.scrollWidth > s.clientWidth + 1 || s.scrollHeight > s.clientHeight + 1;
+  };
 
   // Draw the current position, without animation.
   function paint() {
@@ -633,7 +673,10 @@ window.Books = (() => {
     R.dom.book.style.setProperty('--turn', lift.toFixed(3));
     // The leaf's shadow falls on whichever side it is over.
     R.dom.book.dataset.shadow = (Math.abs(a) < 90) === (t.leaf.classList.contains('origin-left')) ? 'r' : 'l';
-    if (!spread()) t.leaf.style.opacity = t.fwd ? String(clamp(1.6 - p * 1.6 + 0.6, 0, 1)) : String(clamp(p * 1.6, 0, 1));
+    // One page: the leaf fades as it goes over (or arrives). Set on the faces,
+    // never the leaf — opacity on a preserve-3d element flattens it, and a flat
+    // leaf shows its front through, mirrored.
+    if (!spread()) t.leaf.style.setProperty('--fade', t.fwd ? clamp(2.2 - p * 1.6, 0, 1).toFixed(3) : clamp(p * 1.6, 0, 1).toFixed(3));
     // Opening or closing the cover slides the book to the centre as it turns.
     if (spread()) {
       const fromClosed = view().s === 0, toClosed = view(t.to).s === 0;
@@ -829,12 +872,20 @@ window.Books = (() => {
       el('span', { class: 'rd-pop-sep' }),
       el('button', { class: 'rd-pop-btn', text: h.note ? 'Edit note' : 'Note', onclick: () => noteEditor(h, anchor) }),
       el('button', { class: 'rd-pop-btn', text: 'To board', onclick: () => { sendToBoard(h); closePop(); } }),
-      el('button', { class: 'rd-pop-btn danger', text: 'Delete', onclick: () => {
-        R.book.highlights = R.book.highlights.filter((x) => x !== h);
-        save(); paintMarksAll(); paintSide(); closePop();
-      } }),
+      h.note ? el('button', { class: 'rd-pop-btn danger', text: 'Remove note', onclick: () => removeNote(h) }) : null,
+      el('button', { class: 'rd-pop-btn danger', text: 'Remove highlight', onclick: () => removeHighlight(h) }),
     ]);
     placePop(box, anchor);
+  }
+
+  // Taking a note off keeps its highlight; taking a highlight off takes its note too.
+  function removeNote(h) {
+    h.note = '';
+    save(); paintMarksAll(); paintSide(); closePop();
+  }
+  function removeHighlight(h) {
+    R.book.highlights = R.book.highlights.filter((x) => x !== h);
+    save(); paintMarksAll(); paintSide(); closePop();
   }
 
   function noteEditor(h, anchor) {
@@ -976,7 +1027,13 @@ window.Books = (() => {
     } else if (p.tab === 'notes') {
       panel.dataset.tab = 'notes';
       const hs = [...b.highlights].sort((x, y) => x.page - y.page || x.rects[0][1] - y.rects[0][1]);
-      panel.replaceChildren(hs.length ? el('ul', { class: 'rd-list' }, hs.map((h) => el('li', {}, [
+      const removeAll = () => {
+        const notes = hs.filter((h) => h.note).length;
+        if (!confirm(`Remove all ${hs.length} highlight${hs.length > 1 ? 's' : ''}${notes ? ` and ${notes} note${notes > 1 ? 's' : ''}` : ''} from this book?`)) return;
+        b.highlights = [];
+        save(); paintMarksAll(); paintSide();
+      };
+      panel.replaceChildren(hs.length ? el('ul', { class: 'rd-list' }, [...hs.map((h) => el('li', { class: 'rd-row rd-note-row' }, [
         el('button', { class: 'rd-item rd-note', onclick: () => goTo(h.page) }, [
           el('span', { class: `rd-note-bar hl-${h.color}` }),
           el('span', { class: 'rd-item-body' }, [
@@ -985,7 +1042,14 @@ window.Books = (() => {
             h.note ? el('span', { class: 'rd-item-note', text: h.note }) : null,
           ]),
         ]),
-      ]))) : el('p', { class: 'rd-muted', text: 'Select text on a page to highlight it or add a note.' }));
+        el('span', { class: 'rd-row-actions' }, [
+          h.note ? el('button', { class: 'rd-pop-btn danger', text: 'Remove note', title: 'Keeps the highlight',
+            'aria-label': `Remove note on page ${h.page}`, onclick: () => removeNote(h) }) : null,
+          el('button', { class: 'rd-pop-btn danger', text: 'Remove', title: h.note ? 'Removes the highlight and its note' : 'Removes the highlight',
+            'aria-label': `Remove highlight on page ${h.page}`, onclick: () => removeHighlight(h) }),
+        ]),
+      ])), el('li', {}, [el('button', { class: 'rd-pop-btn danger rd-remove-all', text: 'Remove all highlights and notes', onclick: removeAll })])])
+        : el('p', { class: 'rd-muted', text: 'Select text on a page to highlight it or add a note.' }));
     } else if (p.tab === 'search') {
       if (panel.dataset.tab === 'search') return;
       panel.dataset.tab = 'search';
@@ -1010,6 +1074,9 @@ window.Books = (() => {
     dom.spreadBtn = btn('', 'One page / two pages', '', () => { prefs().spread = !prefs().spread; save(); syncSpreadBtn(); relayout(); });
     dom.muteBtn = btn('', '', '', () => { prefs().muted = !prefs().muted; save(); syncMuteBtn(); });
     dom.themeBtn = btn('', 'Light / dark', '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/>', () => document.getElementById('themeBtn').click());
+    dom.zoomOut = el('button', { class: 'icon-btn sm', html: '&minus;', title: 'Zoom out (Ctrl −)', 'aria-label': 'Zoom out', onclick: () => stepZoom(-1) });
+    dom.zoomIn = el('button', { class: 'icon-btn sm', text: '+', title: 'Zoom in (Ctrl +)', 'aria-label': 'Zoom in', onclick: () => stepZoom(1) });
+    dom.zoomLevel = el('button', { class: 'rd-zoom-level', title: 'Fit to screen (Ctrl 0)', 'aria-label': 'Fit to screen', onclick: () => setZoom(1) });
     dom.pageIn = el('input', { class: 'rd-page-in', 'aria-label': 'Page', inputmode: 'numeric',
       onkeydown: (e) => { if (e.key === 'Enter') { goTo(parseInt(e.target.value, 10)); readerEl.focus(); } },
       onfocus: (e) => e.target.select() });
@@ -1021,6 +1088,7 @@ window.Books = (() => {
       dom.sideBtn,
       dom.title,
       el('div', { class: 'rd-pager' }, [dom.pageIn, dom.total]),
+      el('div', { class: 'rd-zoom', role: 'group', 'aria-label': 'Zoom' }, [dom.zoomOut, dom.zoomLevel, dom.zoomIn]),
       dom.markBtn, dom.spreadBtn, dom.muteBtn, dom.themeBtn,
     ]);
 
@@ -1073,10 +1141,19 @@ window.Books = (() => {
     });
     readerEl.addEventListener('pointerdown', (e) => { if (pop && !pop.contains(e.target)) closePop(); }, true);
 
-    // Swipe (a trackpad's two-finger sideways stroke) or the wheel turns pages.
-    let acc = 0, lock = 0;
+    // Ctrl+wheel (and a trackpad pinch, which arrives as one) zooms. Otherwise
+    // the wheel scrolls a book zoomed past the screen, and turns pages if not.
+    let acc = 0, lock = 0, zoomLock = 0;
     dom.stage.addEventListener('wheel', (e) => {
-      if (e.ctrlKey) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const now = performance.now();
+        if (now < zoomLock || !e.deltaY) return;
+        zoomLock = now + 140;
+        stepZoom(e.deltaY < 0 ? 1 : -1, { x: e.clientX, y: e.clientY });
+        return;
+      }
+      if (overflowing()) return;
       e.preventDefault();
       const now = performance.now();
       if (now < lock) return;
@@ -1145,6 +1222,11 @@ window.Books = (() => {
       b: toggleBookmark, B: toggleBookmark,
       t: () => R.dom.sideBtn.click(), T: () => R.dom.sideBtn.click(),
     };
+    if (e.ctrlKey || e.metaKey) {
+      const z = { '=': 1, '+': 1, '-': -1, '_': -1 }[e.key];
+      if (z) { e.preventDefault(); stepZoom(z); return; }
+      if (e.key === '0') { e.preventDefault(); setZoom(1); return; }
+    }
     if (keys[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); keys[e.key](); }
   }
 

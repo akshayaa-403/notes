@@ -910,20 +910,28 @@ a.bm:hover .link-name{color:var(--accent)}
 .rd-search{width:100%;padding:8px 10px;margin-bottom:6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:13px}
 .rd-search:focus{outline:none;border-color:var(--accent)}
 
-.rd-stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;perspective:2600px;min-width:0}
+/* Scrolls once the book is zoomed past it. margin:auto on the book centres it
+   while it fits and lets it start at the edge when it does not, where
+   align/justify-content:center would cut its top and left off. */
+.rd-stage{flex:1;position:relative;display:flex;overflow:auto;padding:36px 70px;min-width:0;scrollbar-width:thin}
+.rd-zoom{display:flex;align-items:center;gap:2px;margin-right:6px}
+.rd-zoom-level{min-width:46px;padding:4px 4px;border:0;border-radius:var(--radius);background:none;color:var(--text-dim);font-size:12.5px}
+.rd-zoom-level:hover{background:var(--surface-2);color:var(--text)}
 .rd-progress{height:3px;flex:none}
 .rd-progress-fill{height:100%;background:var(--ribbon);opacity:.55;transition:width .3s ease}
 
 /* --- the book --- */
 .book{
   --open:1;--read:0;
-  position:relative;display:flex;width:calc(var(--pw) * 2);height:var(--ph);
-  transform:translateX(calc((1 - var(--open)) * var(--pw) * -.5));
+  position:relative;display:flex;flex:none;margin:auto;width:calc(var(--pw) * 2);height:var(--ph);
+  /* the perspective lives here, not on the scrolling stage, so a turn looks
+     the same wherever the book has been scrolled to */
+  transform:perspective(2600px) translateX(calc((1 - var(--open)) * var(--pw) * -.5));
   transition:transform .55s cubic-bezier(.3,.7,.2,1);transform-style:preserve-3d;
 }
 .book.closed{--open:0}
 .book.turning{transition:none}
-.book.single{width:var(--pw);transform:none}
+.book.single{width:var(--pw);transform:perspective(2600px)}
 .slot{position:relative;width:var(--pw);height:var(--ph);flex:none}
 .slot[hidden]{display:none}
 .book.closed .slot-l{visibility:hidden}
@@ -973,6 +981,7 @@ a.bm:hover .link-name{color:var(--accent)}
 .leaf.origin-right{transform-origin:right center}
 .leaf-face{
   position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;overflow:hidden;
+  opacity:var(--fade,1);
   box-shadow:0 0 calc(var(--lift,0) * 40px) rgba(0,0,0,calc(var(--lift,0) * .35));
 }
 .leaf-face.back{transform:rotateY(180deg)}
@@ -1095,3 +1104,7 @@ a.bm:hover .link-name{color:var(--accent)}
   .book,.shelf-book,.bs-book,.rd-bar,.rd-progress-fill{transition:none}
   .ribbon.arriving,.ribbon.leaving,.book.riffle .slot > .paper{animation:none}
 }
+.rd-note-row{flex-direction:column;align-items:stretch}
+.rd-row-actions{display:flex;gap:2px;padding:0 0 4px 17px;font-size:12px;opacity:0;transition:opacity .12s}
+.rd-note-row:hover .rd-row-actions,.rd-row-actions:focus-within{opacity:1}
+.rd-remove-all{margin:10px 8px 4px;font-size:12.5px}
