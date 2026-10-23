@@ -845,6 +845,12 @@ a.bm:hover .link-name{color:var(--accent)}
 .bs-msg{margin:12vh auto 0;max-width:460px;text-align:center;padding:0 20px}
 .bs-msg h3{font-size:20px;font-weight:500;margin:0 0 10px}
 .bs-msg p{color:var(--text-dim);line-height:1.6;margin:0 0 20px}
+@media (hover:none){.bs-remove{opacity:1}}
+@media (max-width:640px){
+  .bs-bar{padding:0 12px;gap:6px}
+  .bs-shelves{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:0 12px;padding:20px 16px}
+  .bs-folder{display:none}
+}
 .bs-drop{display:none}
 .bookshelf.dropping .bs-drop{
   display:flex;align-items:center;justify-content:center;position:absolute;inset:64px 16px 16px;margin:0;
