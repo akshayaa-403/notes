@@ -60,16 +60,18 @@ window.Books = (() => {
   /* ------------------------------------------------------------- folder */
 
   const idb = () => new Promise((res, rej) => {
-    const r = indexedDB.open('notes-books', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    const r = indexedDB.open('notes-books', 2);
+    r.onupgradeneeded = () => {
+      for (const n of ['kv', 'files']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n);
+    };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   });
-  const kv = async (mode, fn) => {
+  const kv = async (mode, fn, store = 'kv') => {
     const db = await idb();
     return new Promise((res, rej) => {
-      const tx = db.transaction('kv', mode);
-      const req = fn(tx.objectStore('kv'));
+      const tx = db.transaction(store, mode);
+      const req = fn(tx.objectStore(store));
       tx.oncomplete = () => res(req.result);
       tx.onerror = () => rej(tx.error);
     });
@@ -78,7 +80,11 @@ window.Books = (() => {
   let dir = null;  // the folder, once permission is granted this session
 
   // Opened from disk (file://) there is no folder access and no module loading.
-  const supported = () => typeof window.showDirectoryPicker === 'function' && location.protocol !== 'file:';
+  const supported = () => location.protocol !== 'file:';
+  // Browsers with no folder access (phones, Firefox, Safari) keep the PDFs in
+  // IndexedDB instead — on that device only, and they count against its quota.
+  const folderMode = () => typeof window.showDirectoryPicker === 'function';
+  const fileStore = (mode, fn) => kv(mode, fn, 'files');
 
   async function permitted(h, ask) {
     if (!h.queryPermission) return true;  // a handle with no permission model
@@ -89,6 +95,7 @@ window.Books = (() => {
 
   // 'ready' | 'locked' (known folder, needs a click) | 'none'
   async function folderState() {
+    if (!folderMode()) return 'ready';
     if (dir) return 'ready';
     const h = await kv('readonly', (s) => s.get('dir')).catch(() => null);
     if (!h) return 'none';
@@ -120,6 +127,12 @@ window.Books = (() => {
   // Bring state.books in line with the folder: new files get an entry, and
   // entries whose file has gone are kept (with their notes) but not shown.
   async function scan() {
+    if (!folderMode()) {
+      const seen = new Set(await fileStore('readonly', (s) => s.getAllKeys()).catch(() => []));
+      Object.entries(lib()).forEach(([k, b]) => { b.present = seen.has(k); });
+      save();
+      return true;
+    }
     const d = await folder(false);
     if (!d) return false;
     const seen = new Set();
@@ -140,14 +153,24 @@ window.Books = (() => {
     .sort(([, a], [, b]) => (b.opened || b.added) - (a.opened || a.added));
 
   async function upload(files) {
-    const d = (await folder(true)) || ((await chooseFolder()) && dir);
-    if (!d) return;
+    const d = folderMode() ? (await folder(true)) || ((await chooseFolder()) && dir) : null;
+    if (folderMode() && !d) return;
     let added = 0;
     for (const f of files) {
       if (f.size > MAX_BYTES) { toast(`${f.name} is over 10 MB.`); continue; }
       const head = new Uint8Array(await f.slice(0, 5).arrayBuffer());
       if (String.fromCharCode(...head) !== '%PDF-') { toast(`${f.name} is not a PDF.`); continue; }
       const name = f.name.replace(/[\\/:*?"<>|]/g, '_');
+      if (!d) {
+        const key = keyOf(name, f.size);
+        if (lib()[key]?.present) { toast(`${name} is already on the shelf.`); continue; }
+        try {
+          await fileStore('readwrite', (s) => s.put(f, key));
+        } catch { toast('Not enough storage on this device.'); continue; }
+        lib()[key] ||= { name, size: f.size, ...parseName(name), bookmarks: [], highlights: [], added: Date.now() };
+        added++;
+        continue;
+      }
       try {
         await d.getFileHandle(name);
         toast(`${name} is already on the shelf.`);
@@ -166,9 +189,13 @@ window.Books = (() => {
   async function remove(key) {
     const b = lib()[key];
     if (!confirm(`Remove "${b.title}" from the shelf?\n\nThis deletes the PDF from the books folder, with its bookmarks and notes.`)) return;
-    const d = await folder(true);
-    if (!d) return;
-    await d.removeEntry(b.name).catch(() => {});
+    if (folderMode()) {
+      const d = await folder(true);
+      if (!d) return;
+      await d.removeEntry(b.name).catch(() => {});
+    } else {
+      await fileStore('readwrite', (s) => s.delete(key));
+    }
     delete lib()[key];
     save();
     refresh();
@@ -183,9 +210,15 @@ window.Books = (() => {
   }));
 
   async function openPdf(b) {
-    const d = await folder(true);
-    if (!d) throw new Error('No access to the books folder.');
-    const file = await (await d.getFileHandle(b.name)).getFile();
+    let file;
+    if (folderMode()) {
+      const d = await folder(true);
+      if (!d) throw new Error('No access to the books folder.');
+      file = await (await d.getFileHandle(b.name)).getFile();
+    } else {
+      file = await fileStore('readonly', (s) => s.get(keyOf(b.name, b.size)));
+      if (!file) throw new Error('Book not found on this device.');
+    }
     const m = await pdfjs();
     return m.getDocument({
       data: new Uint8Array(await file.arrayBuffer()),
@@ -325,8 +358,8 @@ window.Books = (() => {
 
     const bar = el('header', { class: 'bs-bar' }, [
       el('h2', { class: 'bs-title', text: 'Bookshelf' }),
-      fs === 'ready' ? el('span', { class: 'bs-folder', text: `Folder: ${dir.name}` }) : null,
-      fs === 'ready' ? el('button', { class: 'btn sm', text: 'Change folder', onclick: async () => { await chooseFolder(); paintShelf(); refresh(); } }) : null,
+      fs === 'ready' && folderMode() ? el('span', { class: 'bs-folder', text: `Folder: ${dir.name}` }) : null,
+      fs === 'ready' && folderMode() ? el('button', { class: 'btn sm', text: 'Change folder', onclick: async () => { await chooseFolder(); paintShelf(); refresh(); } }) : null,
       el('span', { class: 'bs-spacer' }),
       fs === 'ready' ? el('button', { class: 'btn primary', text: 'Add book', title: 'PDF, up to 10 MB', onclick: () => upInput.click() }) : null,
       upInput,
@@ -337,9 +370,7 @@ window.Books = (() => {
     if (fs === 'unsupported') {
       main = el('div', { class: 'bs-msg' }, [
         el('h3', { text: 'The reader cannot open here' }),
-        el('p', { text: location.protocol === 'file:'
-          ? 'It needs the app served over http(s). Open it from GitHub Pages, or run "python -m http.server" in this folder and open http://localhost:8000.'
-          : 'It needs Chrome or Edge on a desktop — this browser cannot give a web page access to a folder.' }),
+        el('p', { text: 'It needs the app served over http(s). Open it from GitHub Pages, or run "python -m http.server" in this folder and open http://localhost:8000.' }),
       ]);
     } else if (fs !== 'ready') {
       main = el('div', { class: 'bs-msg' }, [
@@ -368,7 +399,7 @@ window.Books = (() => {
           el('button', { class: 'icon-btn sm bs-remove', html: '&times;', title: 'Remove from shelf', 'aria-label': `Remove ${b.title}`, onclick: () => remove(key) }),
         ]))) : el('div', { class: 'bs-msg' }, [
         el('h3', { text: 'An empty shelf' }),
-        el('p', { text: 'Add a PDF (up to 10 MB), or drop one anywhere here.' }),
+        el('p', { text: folderMode() ? 'Add a PDF (up to 10 MB), or drop one anywhere here.' : 'Add a PDF (up to 10 MB). It is kept on this device only.' }),
       ]);
     }
     shelfEl.replaceChildren(bar, main, el('p', { class: 'bs-drop', text: 'Drop PDFs to add them' }));
@@ -416,7 +447,8 @@ window.Books = (() => {
 
   const dpr = () => Math.min(2, window.devicePixelRatio || 1);
   const N = () => R.pdf.numPages;
-  const spread = () => prefs().spread;
+  // A phone shows one page at a time whatever the toggle says.
+  const spread = () => prefs().spread && innerWidth > 700;
 
   // Pages on view at a position. Two-page: spread s holds pages 2s and 2s+1,
   // so the cover (page 1) stands alone on the right like a closed book.
