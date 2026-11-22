@@ -512,6 +512,14 @@ a.bm:hover .link-name{color:var(--accent)}
   padding:2px 5px;font-size:11px;font-family:var(--font);
 }
 .cal-text-input.at-limit{border-color:#e03e3e}
+.cal-count{
+  position:absolute;right:4px;bottom:4px;width:40px;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);color:var(--text);
+  padding:1px 4px;font-size:11px;font-family:var(--font);
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+.cal-count:focus{outline:none;border-color:var(--accent)}
 
 /* limit notice */
 .cal-warn{

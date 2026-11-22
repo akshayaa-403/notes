@@ -1729,6 +1729,14 @@ const DAY_TEXT_MAX = 75;
 // dates and a padding cell gets no key at all.
 const dayKey = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 const dayEntry = (key) => (state.calendarDays[key] ||= {});
+// A day with no note, picture or count is dropped rather than kept as {}.
+const dayPrune = (key) => {
+  const e = state.calendarDays[key];
+  if (e && !e.text && !e.src && !e.jobs) delete state.calendarDays[key];
+};
+
+// Job-application counter, shown only from the day tracking started.
+const JOBS_FROM = '2026-11-15';
 
 function calWarn(msg) {
   const bar = document.getElementById('calWarn');
@@ -1817,13 +1825,13 @@ function editText(key, cellNode) {
     // swallow a click aimed at another day, so put the cell back by hand.
     if (v === before) {
       inp.remove();
-      if (!entry.text && !entry.src) delete state.calendarDays[key];
+      dayPrune(key);
       if (v) cellNode.append(el('span', { class: 'cal-text', text: v }));
       return;
     }
 
     if (v) entry.text = v; else delete entry.text;
-    if (!entry.text && !entry.src) delete state.calendarDays[key];
+    dayPrune(key);
     save(); calPaint();
   });
 
@@ -1847,7 +1855,7 @@ function calCell(n, key, isToday = false) {
       onclick: (e) => {
         e.stopPropagation();
         delete entry.src;
-        if (!entry.text) delete state.calendarDays[key];
+        dayPrune(key);
         save(); calPaint();
       },
     }));
@@ -1857,6 +1865,28 @@ function calCell(n, key, isToday = false) {
   }
 
   if (!key) return cellNode;
+
+  // Keys are ISO dates, so string comparison is date comparison.
+  if (key >= JOBS_FROM) {
+    const count = el('input', {
+      class: 'cal-count', type: 'number', min: '0', step: '1', inputmode: 'numeric',
+      value: String(entry?.jobs || 0),
+      title: 'Job applications', 'aria-label': 'Job applications on ' + key,
+    });
+    // Typing here must not open the picture picker or the note editor.
+    ['click', 'dblclick'].forEach((t) => count.addEventListener(t, (e) => e.stopPropagation()));
+    count.addEventListener('focus', () => count.select());
+    count.addEventListener('keydown', (e) => { if (e.key === 'Enter') count.blur(); });
+    // No repaint: the count is already on screen, and a rebuild would eat clicks.
+    count.addEventListener('change', () => {
+      const v = Math.max(0, Math.floor(Number(count.value)) || 0);
+      count.value = String(v);
+      if (v) dayEntry(key).jobs = v; else if (state.calendarDays[key]) delete state.calendarDays[key].jobs;
+      dayPrune(key);
+      save();
+    });
+    cellNode.append(count);
+  }
 
   // A single click must wait out the double-click window, or picking a day to
   // type on would also pop the file dialog.
