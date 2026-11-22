@@ -6,3 +6,4 @@ books/
 *.pdf
 tools/sync.log
 sync/*.tmp
+__pycache__/
