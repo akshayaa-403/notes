@@ -32,6 +32,10 @@
 'use strict';
 
 const STORAGE_KEY = 'notes.dashboard.v1';
+// Nightly sync (see "nightly sync"); up here because save() uses them.
+const SYNC_KEY = 'notes.syncKey';
+const SYNC_FILE = 'sync/backup.enc.json';
+const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 /* ---------------------------------------------------------------- helpers */
@@ -153,6 +157,7 @@ try {
 const save = () => {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    syncSoon();
   } catch (err) {
     // Most likely the quota: base64 images are the usual culprit.
     console.warn('Could not save — storage may be full.', err);
@@ -1596,28 +1601,130 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 
-function mergeImport(inc) {
-  const n = { boards: 0, fields: 0, kept: 0 };
+// Cheap fingerprint, only ever compared against itself.
+const hashOf = (v) => {
+  const s = JSON.stringify(v);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return h;
+};
+
+/* `base` is only passed by the nightly sync: fingerprints of what the last
+   sync delivered. A value still matching its fingerprint was never touched
+   here, so the newer synced one may replace it. Anything edited here is kept,
+   and a board edited on both sides gets the synced version beside it. */
+function mergeImport(inc, base = null) {
+  const n = { boards: 0, fields: 0, kept: 0, updated: 0 };
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-  for (const b of inc.boards || []) {
-    const mine = state.boards.find((x) => x.id === b.id);
-    if (mine && same(mine, b)) continue;
-    if (mine) { b.id = uid(); b.name += ' (imported)'; }
-    state.boards.push(b);
-    n.boards++;
-  }
+  const place = (b) => {
+    const i = state.boards.findIndex((x) => x.id === b.id);
+    if (i < 0) { state.boards.push(b); n.boards++; }
+    else if (same(state.boards[i], b)) { /* already here */ }
+    else if (base && base.boards[b.id] === hashOf(state.boards[i])) { state.boards[i] = b; n.updated++; }
+    else if (!base) { b.id = uid(); b.name += ' (imported)'; state.boards.push(b); n.boards++; return; }
+    else if (b.id.endsWith('~sync')) { n.kept++; return; }
+    else { place({ ...b, id: b.id + '~sync', name: b.name + ' (synced)' }); return; }
+    if (base) base.boards[b.id] = hashOf(b);
+  };
+  (inc.boards || []).forEach(place);
+
   for (const [key, day] of Object.entries(inc.calendarDays || {})) {
     const mine = (state.calendarDays[key] ||= {});
     for (const [f, v] of Object.entries(day)) {
-      if (mine[f] === undefined) { mine[f] = v; n.fields++; } else if (mine[f] !== v) n.kept++;
+      const fp = base ? (base.days[key] ||= {}) : null;
+      if (mine[f] === undefined) { mine[f] = v; n.fields++; }
+      else if (mine[f] === v) { /* already here */ }
+      else if (fp && fp[f] === hashOf(mine[f])) { mine[f] = v; n.updated++; }
+      else { n.kept++; continue; }
+      if (fp) fp[f] = hashOf(v);
     }
   }
   // Union, so a seed pack already imported on either side never re-runs.
   state.seeded = [...new Set([...(state.seeded || []), ...(inc.seeded || [])])];
   // Anything else (legend, pomodoro, …) only fills a gap.
-  for (const [k, v] of Object.entries(inc)) if (state[k] === undefined) state[k] = v;
+  for (const [k, v] of Object.entries(inc)) if (k !== 'syncBase' && state[k] === undefined) state[k] = v;
   return n;
+}
+
+/* ------------------------------------------------------------ nightly sync */
+
+/* The repo is public, so what goes into it is encrypted here first
+   (PBKDF2 → AES-GCM, browser built-ins). On the local copy every save hands
+   the encrypted state to tools/serve.py, which writes sync/backup.enc.json; a
+   nightly task commits and pushes it. The hosted site pulls that file on load
+   and merges it in with mergeImport — which never deletes anything.
+   The passphrase lives under its own key, so it is never in a backup. */
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+async function syncKeyFrom(pass, salt) {
+  const raw = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' },
+    raw, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function syncEncrypt(text, pass) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await syncKeyFrom(pass, salt);
+  // Chunked: a big state blows the argument limit of String.fromCharCode(...).
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text)));
+  let bin = '';
+  for (let i = 0; i < ct.length; i += 0x8000) bin += String.fromCharCode(...ct.subarray(i, i + 0x8000));
+  return { v: 1, stamp: Date.now(), salt: b64(salt), iv: b64(iv), data: btoa(bin) };
+}
+
+async function syncDecrypt(f, pass) {
+  const key = await syncKeyFrom(pass, unb64(f.salt));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(f.iv) }, key, unb64(f.data));
+  return new TextDecoder().decode(pt);
+}
+
+function syncPass() { try { return localStorage.getItem(SYNC_KEY); } catch { return null; } }
+
+// Local copy: push a few seconds after the last change, not on every keystroke.
+function syncSoon() {
+  if (!isLocal || !syncPass()) return;
+  clearTimeout(syncSoon.timer);
+  syncSoon.timer = setTimeout(async () => {
+    try {
+      const body = JSON.stringify(await syncEncrypt(localStorage.getItem(STORAGE_KEY), syncPass()));
+      await fetch('sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    } catch (err) {
+      // Plain `python -m http.server` has no /sync; the app works without it.
+      console.warn('Sync file not written.', err);
+    }
+  }, 3000);
+}
+
+async function pullSync() {
+  if (isLocal) return;
+  let f;
+  try {
+    const r = await fetch(SYNC_FILE, { cache: 'no-store' });
+    if (!r.ok) return;
+    f = await r.json();
+  } catch { return; }
+  if (f.v !== 1 || state.syncBase?.stamp === f.stamp) return;
+
+  let pass = syncPass();
+  let text = null;
+  for (let tries = 0; tries < 3 && text === null; tries++) {
+    pass ||= prompt('Passphrase for your synced notes (Cancel to skip for now):');
+    if (!pass) return;
+    try { text = await syncDecrypt(f, pass); } catch { pass = null; }
+  }
+  if (text === null) { alert('Wrong passphrase — synced notes were not loaded.'); return; }
+  // Only a passphrase that worked is remembered.
+  try { localStorage.setItem(SYNC_KEY, pass); } catch { /* still merged this time */ }
+
+  state.syncBase ||= { boards: {}, days: {} };
+  const n = mergeImport(JSON.parse(text), state.syncBase);
+  state.syncBase.stamp = f.stamp;
+  save();
+  render(); calPaint();
+  if (n.kept) console.info(`Sync kept ${n.kept} value(s) edited on this site.`);
 }
 
 document.getElementById('importBtn').addEventListener('click', () => {
@@ -2191,3 +2298,13 @@ for (const p of window.SEED?.patches || []) {
   if (view === 'calendar') setMode('calendar');
   if (wanted || view) history.replaceState(null, '', location.pathname);
 }
+
+/* Nightly sync: the local copy asks once for a passphrase and starts writing
+   the sync file; the hosted site pulls the latest one in. */
+if (isLocal && !syncPass()) {
+  const pass = prompt('Choose a passphrase to encrypt your nightly sync to GitHub.\n'
+    + 'You will type it once on the hosted site. Cancel to skip.');
+  if (pass) { try { localStorage.setItem(SYNC_KEY, pass); } catch { /* storage full */ } }
+}
+if (isLocal) syncSoon();
+pullSync();

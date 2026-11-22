@@ -4,3 +4,5 @@
 books/
 # Books for the PDF reader stay on this machine only.
 *.pdf
+tools/sync.log
+sync/*.tmp
