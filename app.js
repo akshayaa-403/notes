@@ -1581,6 +1581,63 @@ document.getElementById('themeBtn').addEventListener('click', () => {
   applyTheme(); save();
 });
 
+/* ---------------------------------------------------------- backup / move */
+
+/* localStorage is per-site, so the local copy and the hosted one never see
+   each other's data. Export writes everything to a file; Import on the other
+   site merges it in. Import ONLY ADDS: nothing already saved is removed or
+   overwritten. A board that differs comes in beside the existing one, and a
+   calendar day only gains the fields it does not have yet. */
+document.getElementById('exportBtn').addEventListener('click', () => {
+  save();
+  const blob = new Blob([localStorage.getItem(STORAGE_KEY) || JSON.stringify(state)], { type: 'application/json' });
+  const a = el('a', { href: URL.createObjectURL(blob), download: `notes-backup-${new Date().toISOString().slice(0, 10)}.json` });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+function mergeImport(inc) {
+  const n = { boards: 0, fields: 0, kept: 0 };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  for (const b of inc.boards || []) {
+    const mine = state.boards.find((x) => x.id === b.id);
+    if (mine && same(mine, b)) continue;
+    if (mine) { b.id = uid(); b.name += ' (imported)'; }
+    state.boards.push(b);
+    n.boards++;
+  }
+  for (const [key, day] of Object.entries(inc.calendarDays || {})) {
+    const mine = (state.calendarDays[key] ||= {});
+    for (const [f, v] of Object.entries(day)) {
+      if (mine[f] === undefined) { mine[f] = v; n.fields++; } else if (mine[f] !== v) n.kept++;
+    }
+  }
+  // Union, so a seed pack already imported on either side never re-runs.
+  state.seeded = [...new Set([...(state.seeded || []), ...(inc.seeded || [])])];
+  // Anything else (legend, pomodoro, …) only fills a gap.
+  for (const [k, v] of Object.entries(inc)) if (state[k] === undefined) state[k] = v;
+  return n;
+}
+
+document.getElementById('importBtn').addEventListener('click', () => {
+  const inp = el('input', { type: 'file', accept: 'application/json,.json' });
+  inp.addEventListener('change', async () => {
+    const file = inp.files[0];
+    if (!file) return;
+    let inc;
+    try { inc = JSON.parse(await file.text()); } catch { inc = null; }
+    if (!inc || !Array.isArray(inc.boards)) { alert('That file is not a notes backup.'); return; }
+    const n = mergeImport(inc);
+    save();
+    alert(`Imported ${n.boards} board(s) and ${n.fields} calendar entr${n.fields === 1 ? 'y' : 'ies'}.`
+      + (n.kept ? `\n${n.kept} day value(s) already here were different and were kept as they were.` : '')
+      + '\nNothing was removed.');
+    location.reload();
+  });
+  inp.click();
+});
+
 /* ---------------------------------------------------------------- pomodoro */
 
 const POMO_LENGTHS = { focus: 25 * 60, short: 5 * 60, long: 15 * 60 };
