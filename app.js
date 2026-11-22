@@ -1884,6 +1884,7 @@ function calCell(n, key, isToday = false) {
       if (v) dayEntry(key).jobs = v; else if (state.calendarDays[key]) delete state.calendarDays[key].jobs;
       dayPrune(key);
       save();
+      calGraph();
     });
     cellNode.append(count);
   }
@@ -1942,6 +1943,47 @@ function calPaint() {
   // Weeks share the leftover height, so the grid always fills the canvas.
   const weeks = (first + days + trail) / 7;
   calGrid.style.gridTemplateRows = `auto repeat(${weeks}, minmax(0, 1fr))`;
+  calGraph();
+}
+
+/* Faint line of job applications across the month, day 1 at the left edge to
+   the last day at the right. It stops at today so future zeros don't drag it
+   down. Redrawn on its own when a count changes, without rebuilding the grid. */
+function calGraph() {
+  calGrid.querySelector('.cal-graph')?.remove();
+  const year = calView.getFullYear();
+  const month = calView.getMonth();
+  const days = new Date(year, month + 1, 0).getDate();
+  const now = new Date();
+  const todayKey = dayKey(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const pts = [];
+  for (let n = 1; n <= days; n++) {
+    const key = dayKey(year, month, n);
+    if (key < JOBS_FROM || key > todayKey) continue;
+    pts.push([n, state.calendarDays[key]?.jobs || 0]);
+  }
+  if (pts.length < 2) return;
+
+  const max = Math.max(1, ...pts.map(([, v]) => v));
+  const xy = pts.map(([n, v]) => [((n - 0.5) / days) * 100, 92 - (v / max) * 80]);
+  const line = xy.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+  const area = `${xy[0][0]},100 ${line} ${xy[xy.length - 1][0]},100`;
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'cal-graph');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  const fill = document.createElementNS(NS, 'polygon');
+  fill.setAttribute('points', area);
+  fill.setAttribute('class', 'cal-graph-area');
+  const stroke = document.createElementNS(NS, 'polyline');
+  stroke.setAttribute('points', line);
+  stroke.setAttribute('class', 'cal-graph-line');
+  svg.append(fill, stroke);
+  calGrid.append(svg);
 }
 
 const calGo = (delta) => {
