@@ -2003,45 +2003,58 @@ function calPaint() {
   calGraph();
 }
 
-/* Faint line of job applications across the month, day 1 at the left edge to
-   the last day at the right. It stops at today so future zeros don't drag it
-   down. Redrawn on its own when a count changes, without rebuilding the grid. */
+/* Faint job-applications line drawn inside the day tiles: each day's point
+   sits in the middle of its own tile, higher in the tile for a bigger count.
+   Days are joined within a week row and the line breaks at the week's end,
+   so it never slashes back across the grid. Stops at today so future zeros
+   don't drag it down. Measured from the real tiles, so it is redrawn on
+   resize and on its own when a count changes, without rebuilding the grid. */
 function calGraph() {
   calGrid.querySelector('.cal-graph')?.remove();
-  const year = calView.getFullYear();
-  const month = calView.getMonth();
-  const days = new Date(year, month + 1, 0).getDate();
+  if (calEl.hidden) return;
   const now = new Date();
   const todayKey = dayKey(now.getFullYear(), now.getMonth(), now.getDate());
+  const g = calGrid.getBoundingClientRect();
+  if (!g.width) return;
 
-  const pts = [];
-  for (let n = 1; n <= days; n++) {
-    const key = dayKey(year, month, n);
-    if (key < JOBS_FROM || key > todayKey) continue;
-    pts.push([n, state.calendarDays[key]?.jobs || 0]);
+  const pts = [...calGrid.querySelectorAll('.cal-day[data-date]')]
+    .filter((c) => c.dataset.date >= JOBS_FROM && c.dataset.date <= todayKey)
+    .map((c) => ({ r: c.getBoundingClientRect(), v: state.calendarDays[c.dataset.date]?.jobs || 0 }));
+  if (!pts.length) return;
+  const max = Math.max(1, ...pts.map((p) => p.v));
+
+  // Split into week rows by tile top.
+  const rows = [];
+  for (const p of pts) {
+    const row = rows[rows.length - 1];
+    if (row && Math.abs(row[0].r.top - p.r.top) < 2) row.push(p); else rows.push([p]);
   }
-  if (pts.length < 2) return;
-
-  const max = Math.max(1, ...pts.map(([, v]) => v));
-  const xy = pts.map(([n, v]) => [((n - 0.5) / days) * 100, 92 - (v / max) * 80]);
-  const line = xy.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
-  const area = `${xy[0][0]},100 ${line} ${xy[xy.length - 1][0]},100`;
 
   const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('class', 'cal-graph');
-  svg.setAttribute('viewBox', '0 0 100 100');
-  svg.setAttribute('preserveAspectRatio', 'none');
-  svg.setAttribute('aria-hidden', 'true');
-  const fill = document.createElementNS(NS, 'polygon');
-  fill.setAttribute('points', area);
-  fill.setAttribute('class', 'cal-graph-area');
-  const stroke = document.createElementNS(NS, 'polyline');
-  stroke.setAttribute('points', line);
-  stroke.setAttribute('class', 'cal-graph-line');
-  svg.append(fill, stroke);
+  const mk = (tag, attrs) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    return n;
+  };
+  const svg = mk('svg', { class: 'cal-graph', viewBox: `0 0 ${g.width} ${g.height}`, 'aria-hidden': 'true' });
+
+  for (const row of rows) {
+    const xy = row.map(({ r, v }) => [
+      r.left - g.left + r.width / 2,
+      // 0 sits near the tile's bottom, the month's max near its top.
+      r.bottom - g.top - r.height * (0.12 + 0.7 * (v / max)),
+    ]);
+    const bottom = row[0].r.bottom - g.top;
+    const line = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+    if (xy.length > 1) {
+      svg.append(mk('polygon', { class: 'cal-graph-area', points: `${xy[0][0]},${bottom} ${line} ${xy[xy.length - 1][0]},${bottom}` }));
+      svg.append(mk('polyline', { class: 'cal-graph-line', points: line }));
+    }
+    xy.forEach(([x, y]) => svg.append(mk('circle', { class: 'cal-graph-dot', cx: x, cy: y, r: 3 })));
+  }
   calGrid.append(svg);
 }
+new ResizeObserver(() => calGraph()).observe(calGrid);
 
 const calGo = (delta) => {
   calView = new Date(calView.getFullYear(), calView.getMonth() + delta, 1);

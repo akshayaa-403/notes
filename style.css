@@ -532,6 +532,7 @@ a.bm:hover .link-name{color:var(--accent)}
   fill:none;stroke:var(--accent);stroke-width:2;opacity:.3;
   vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round;
 }
+.cal-graph-dot{fill:var(--accent);opacity:.35}
 
 /* limit notice */
 .cal-warn{
